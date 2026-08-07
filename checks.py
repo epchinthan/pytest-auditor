@@ -8,6 +8,7 @@ a list[Issue] — zero or more. No global state, no printing.
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 import ast_helpers as h
@@ -42,9 +43,19 @@ def check_file_length(path: Path, line_count: int) -> list[Issue]:
     return []
 
 
+SAFE_TEST_VALUES = re.compile(
+    r"""["'](wrong|bad|invalid|fake|dummy|test|example|placeholder|
+    secret|changeme|none|empty|xxx|123|password|admin|user|guest)["']\s*$""",
+)
+
 def check_credentials(source: str, path: Path) -> list[Issue]:
+    """Flag hardcoded credentials, but ignore obvious test placeholder values."""
     issues = []
     for m in CREDENTIAL_PATTERN.finditer(source):
+        # skip obvious test placeholder values
+        value_part = m.group(0).split("=", 1)[1].strip()
+        if SAFE_TEST_VALUES.match(value_part):
+            continue
         ln = source[: m.start()].count("\n") + 1
         issues.append(Issue(WARNING, "F003",
             f"Possible hardcoded credential: {m.group(0)[:50]}",
@@ -98,9 +109,14 @@ def check_fixture(node: ast.AST, path: Path) -> list[Issue]:
             "those lines are unreachable; use yield instead so teardown runs",
             rel, node.lineno))
 
-    if h.has_assert_in_body(node):
+    # Only flag assert in fixture when it also yields — meaning it's a setup
+    # fixture, not a standalone validation helper. A plain fixture that just
+    # asserts a precondition and returns is a legitimate pattern.
+    if h.has_assert_in_body(node) and h.uses_yield(node):
         issues.append(Issue(WARNING, "FX02",
-            f"Fixture '{name}' contains assert — shows as ERROR not FAILED",
+            f"Fixture '{name}' contains assert before yield — "
+            "assertion failures show as ERROR not FAILED; "
+            "raise explicitly instead",
             rel, node.lineno))
 
     if body_len > 30:
@@ -118,8 +134,9 @@ def check_fixture(node: ast.AST, path: Path) -> list[Issue]:
             f"Fixture '{name}' yields {h.yield_count(node)} times — only first yield is used",
             rel, node.lineno))
 
+    PYTEST_FIXTURE_PARAMS = {'request', 'tmp_path', 'capsys', 'capfd', 'monkeypatch', 'caplog', 'pytestconfig'}
     for arg in node.args.args:
-        if arg.arg in PYTHON_BUILTINS:
+        if arg.arg in PYTHON_BUILTINS and arg.arg not in PYTEST_FIXTURE_PARAMS:
             issues.append(Issue(INFO, "FX07",
                 f"Fixture '{name}': parameter '{arg.arg}' shadows a Python builtin",
                 rel, node.lineno))
@@ -162,6 +179,7 @@ def check_test(
     class_name: str | None,
     known_fixture_names: set[str],
     registered_marks: set[str],
+    tree: ast.AST | None = None,
 ) -> list[Issue]:
     """All checks that apply to a single test function. Returns list of Issues."""
     issues  = []
@@ -174,7 +192,7 @@ def check_test(
     is_async = h.is_async(node)
 
     # ── assertions ─────────────────────────────────────────────────────────
-    if n_ass == 0:
+    if n_ass == 0 and not h.has_pytest_raises(node):
         issues.append(Issue(ERROR, "T001",
             f"{pfx}{name}: no assert statements — test proves nothing",
             rel, node.lineno))
@@ -184,7 +202,7 @@ def check_test(
             f"{pfx}{name}: {n_ass} assertions — consider splitting or parametrize",
             rel, node.lineno))
 
-    if h.has_assert_true_literal(node):
+    if h.has_assert_true_literal(node) and not h.has_pytest_raises(node):
         issues.append(Issue(WARNING, "T019",
             f"{pfx}{name}: assert True / assert 1==1 — placeholder that proves nothing",
             rel, node.lineno))
@@ -245,9 +263,10 @@ def check_test(
             rel, node.lineno))
 
     # ── async ──────────────────────────────────────────────────────────────
-    if is_async and not h.has_asyncio_mark(node):
+    if is_async and not h.has_asyncio_mark(node) and not h.asyncio_mode_is_auto(tree):
         issues.append(Issue(INFO, "T007",
-            f"{pfx}{name}: async test without @pytest.mark.asyncio",
+            f"{pfx}{name}: async test without @pytest.mark.asyncio — "
+            "add mark or set asyncio_mode=\'auto\' in pyproject.toml",
             rel, node.lineno))
 
     if h.has_asyncio_sleep_zero(node):
@@ -262,8 +281,14 @@ def check_test(
 
     # ── sleep / print / except ────────────────────────────────────────────
     if h.has_sleep(node):
-        issues.append(Issue(WARNING, "T011",
-            f"{pfx}{name}: time.sleep() — mock time instead",
+        # Check if it looks like an integration test (has integration/slow/e2e mark)
+        INTEGRATION_MARKS = {"integration", "slow", "e2e", "functional", "acceptance"}
+        is_integration = bool(set(marks) & INTEGRATION_MARKS)
+        level = INFO if is_integration else WARNING
+        issues.append(Issue(level, "T011",
+            f"{pfx}{name}: time.sleep() found — "
+            + ("acceptable in integration tests but consider event-based waiting"
+               if is_integration else "mock time instead; sleep makes tests slow and fragile"),
             rel, node.lineno))
 
     if h.has_print(node):
@@ -299,7 +324,7 @@ def check_test(
             f"{pfx}{name}: @parametrize without id= — use pytest.param(..., id='name')",
             rel, node.lineno))
 
-    if h.param_single(node):
+    if h.param_single(node) and not h.param_has_marks_only(node):
         issues.append(Issue(INFO, "T009",
             f"{pfx}{name}: @parametrize with 1 case — use a regular test instead",
             rel, node.lineno))
@@ -321,9 +346,11 @@ def check_test(
             f"{pfx}{name}: vague test name — use test_login_fails_if_password_wrong style",
             rel, node.lineno))
 
-    if NUMBERED_NAMES.match(name):
+    # Only flag purely numeric endings like test_thing_1, test_1
+    # Don't flag names like test_retry_3_times where the number is semantic
+    if NUMBERED_NAMES.match(name) and re.search(r"_\d+$", name):
         issues.append(Issue(INFO, "N007",
-            f"{pfx}{name}: numbered test name — use descriptive names",
+            f"{pfx}{name}: test name ends with a number — use descriptive names",
             rel, node.lineno))
 
     # ── mocking ────────────────────────────────────────────────────────────
@@ -343,9 +370,14 @@ def check_test(
             rel, node.lineno))
 
     targets = h.patch_targets(node)
-    if targets and any("." not in t for t in targets if t):
+    bad_targets = [
+        t for t in targets
+        if t and "." not in t and not h.is_builtin_patch_target(t)
+    ]
+    if bad_targets:
         issues.append(Issue(WARNING, "MK06",
-            f"{pfx}{name}: patch target has no module path — use 'myapp.module.name'",
+            f"{pfx}{name}: patch target {bad_targets} has no module path — "
+            "use \'myapp.module.name\'",
             rel, node.lineno))
 
     if len(targets) != len(set(targets)) and targets:
@@ -369,7 +401,14 @@ def check_class(node: ast.ClassDef, path: Path) -> list[Issue]:
             rel, node.lineno))
 
     test_methods = [n for n in node.body if h.is_test_func(n)]
-    if not test_methods:
+    has_setup = any(
+        isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and n.name in ("setup_method", "teardown_method", "setup_class",
+                        "teardown_class", "setup", "teardown")
+        for n in node.body
+    )
+    has_fixtures = any(h.is_fixture(n) for n in node.body)
+    if not test_methods and not has_setup and not has_fixtures:
         issues.append(Issue(INFO, "N005",
             f"Class '{node.name}' has no test methods",
             rel, node.lineno))
@@ -385,12 +424,21 @@ def check_non_test_class(node: ast.ClassDef, path: Path) -> list[Issue]:
     return []
 
 
-def check_check_prefix(node: ast.AST, path: Path) -> list[Issue]:
-    if node.name.startswith(("check_", "verify_")):
-        return [Issue(WARNING, "N002",
-            f"'{node.name}' starts with check_/verify_ — pytest won't collect it",
-            str(path), node.lineno)]
-    return []
+def check_check_prefix(node: ast.AST, path: Path, tree: ast.AST) -> list[Issue]:
+    """
+    Flag check_/verify_ functions only when they look like forgotten tests —
+    i.e. they are never called anywhere in the file.
+    If the function is called by other tests or helpers it's a legitimate
+    shared assertion helper and should be left alone.
+    """
+    if not node.name.startswith(("check_", "verify_")):
+        return []
+    if h.is_called_in_tree(node.name, tree):
+        return []   # it's a helper — called by something, intentional
+    return [Issue(WARNING, "N002",
+        f"'{node.name}' starts with check_/verify_ and is never called — "
+        "pytest won't collect it; rename to test_ or call it from a test",
+        str(path), node.lineno)]
 
 
 # ── duplicate name check ──────────────────────────────────────────────────────

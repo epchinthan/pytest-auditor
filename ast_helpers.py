@@ -417,3 +417,61 @@ def all_classes_no_class_fixtures(nodes: list, fixture_meta: dict) -> bool:
     if not has_class or has_top_func:
         return False
     return not any(fx.get("scope") == "class" for fx in fixture_meta.values())
+
+
+def is_called_in_tree(func_name: str, tree: ast.AST) -> bool:
+    """True if func_name appears as a call anywhere in the tree."""
+    return any(
+        isinstance(n, ast.Call)
+        and (
+            (isinstance(n.func, ast.Name) and n.func.id == func_name)
+            or (isinstance(n.func, ast.Attribute) and n.func.attr == func_name)
+        )
+        for n in ast.walk(tree)
+    )
+
+
+def has_pytest_raises(node: ast.AST) -> bool:
+    """True if the test contains a pytest.raises() context manager."""
+    for n in ast.walk(node):
+        if isinstance(n, ast.With):
+            for item in n.items:
+                if "pytest.raises" in unparse(item.context_expr):
+                    return True
+    return False
+
+
+def asyncio_mode_is_auto(tree: ast.AST) -> bool:
+    """
+    True if asyncio_mode='auto' is set anywhere in the file —
+    a common pattern via pytestmark or module-level config comment.
+    We can't read pyproject.toml here so we check for the string
+    in the module source as a heuristic.
+    """
+    src = unparse(tree)
+    return "asyncio_mode" in src and "auto" in src
+
+
+def param_has_marks_only(node: ast.AST) -> bool:
+    """
+    True if @parametrize has only 1 case but that case uses pytest.param
+    with marks — a valid pattern for xfail/skip on a specific input.
+    """
+    for d in node.decorator_list:
+        src = unparse(d)
+        if ("parametrize" in src and param_count(node) == 1
+                and "pytest.param" in src and ("xfail" in src or "skip" in src)):
+                return True
+    return False
+
+
+def is_builtin_patch_target(target: str) -> bool:
+    """
+    True when patching a builtin that legitimately has no module path —
+    e.g. 'builtins.open', 'builtins.print', 'open', 'print'.
+    """
+    builtin_names = {
+        "open", "print", "input", "len", "range", "sorted",
+        "builtins.open", "builtins.print", "builtins.input",
+    }
+    return target in builtin_names or target.startswith("builtins.")

@@ -198,7 +198,7 @@ def analyse_file(
             if h.is_fixture(node):
                 continue
             if not h.is_test_func(node):
-                report.issues += checks.check_check_prefix(node, path)
+                report.issues += checks.check_check_prefix(node, path, tree)
                 continue
 
             report.test_count += 1
@@ -212,7 +212,7 @@ def analyse_file(
                     fixture_usage[arg.arg] += 1
 
             issues = checks.check_test(
-                node, path, class_name, known_fixture_names, registered_marks
+                node, path, class_name, known_fixture_names, registered_marks, tree
             )
 
             td: dict = {
