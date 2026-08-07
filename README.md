@@ -13,7 +13,7 @@ terminal colours. Works as a standalone script, a shell script, or a pytest plug
 
 ```
 your-project/
-  run.sh                  ← shell script — install deps + run
+  Makefile                ← make audit / make audit-strict
   pytest_auditor/
     __init__.py
     __main__.py           ← CLI entry point + pytest plugin hooks
@@ -25,24 +25,17 @@ your-project/
 
 ---
 
-## Quickest start — shell script
+## Quickest start — make
 
 ```bash
-chmod +x run.sh
-
-./run.sh                        # scan ./tests → pytest_audit.html
-./run.sh src/tests              # custom path
-./run.sh tests --fail-under 80  # fail if score < 80
-./run.sh tests --json out.json  # also write JSON
+make audit                        # scan ./tests → pytest_audit.html
+make audit TESTS=src/tests        # custom path
+make audit-strict                 # fail if score < 80
+make audit-strict SCORE=90        # custom threshold
+make audit HTML=reports/out.html  # custom output path
 ```
 
-The script:
-1. Finds Python 3.10+ on your system
-2. Installs `rich` if not already present
-3. Verifies all auditor files are in place
-4. Runs the audit and prints the HTML output path
-
-Exit codes: `0` = clean · `1` = score below `--fail-under` threshold · `2` = bad arguments
+`make install` to install `rich` on its own. All targets install dependencies automatically before running.
 
 ---
 
