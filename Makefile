@@ -13,12 +13,12 @@ TESTS       ?= tests
 HTML        ?= pytest_audit.html
 SCORE       ?= 80
 
-# Directory containing this Makefile — pytest_auditor/ must live here
-MAKEFILE_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+# Absolute path to the directory containing this Makefile.
+# pytest_auditor/ must be a subfolder here.
+HERE := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 
 .PHONY: audit audit-strict install help
 
-# Default target
 help:
 	@echo ""
 	@echo "  pytest-auditor"
@@ -32,11 +32,12 @@ help:
 	@echo ""
 
 install:
-	$(PYTHON) -m pip install rich --quiet --disable-pip-version-check 2>/dev/null || \
-	$(PYTHON) -m pip install rich --quiet --break-system-packages 2>/dev/null || true
+	@$(PYTHON) -m pip install rich --quiet --disable-pip-version-check 2>/dev/null || \
+	 $(PYTHON) -m pip install rich --quiet --break-system-packages 2>/dev/null || \
+	 echo "  note: could not install rich — run: pip install rich"
 
 audit: install
-	PYTHONPATH=$(MAKEFILE_DIR) $(PYTHON) -m pytest_auditor $(TESTS) --html $(HTML)
+	cd $(HERE) && $(PYTHON) -m pytest_auditor $(abspath $(TESTS)) --html $(abspath $(HTML))
 
 audit-strict: install
-	PYTHONPATH=$(MAKEFILE_DIR) $(PYTHON) -m pytest_auditor $(TESTS) --html $(HTML) --fail-under $(SCORE)
+	cd $(HERE) && $(PYTHON) -m pytest_auditor $(abspath $(TESTS)) --html $(abspath $(HTML)) --fail-under $(SCORE)
