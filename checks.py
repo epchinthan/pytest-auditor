@@ -92,10 +92,10 @@ def check_fixture(node: ast.AST, path: Path) -> list[Issue]:
     autouse  = h.fixture_autouse(node)
     body_len = len(node.body)
 
-    if body_len > 2 and not h.uses_yield(node):
-        issues.append(Issue(INFO, "FX01",
-            f"Fixture '{name}' has {body_len} statements but uses return — "
-            "consider yield for guaranteed teardown",
+    if h.has_unreachable_teardown(node):
+        issues.append(Issue(WARNING, "FX01",
+            f"Fixture '{name}' has statements after a top-level return — "
+            "those lines are unreachable; use yield instead so teardown runs",
             rel, node.lineno))
 
     if h.has_assert_in_body(node):

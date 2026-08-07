@@ -59,6 +59,28 @@ def fixture_autouse(node: ast.AST) -> bool:
 def uses_yield(node: ast.AST) -> bool:
     return any(isinstance(n, ast.Yield) for n in ast.walk(node))
 
+
+def has_unreachable_teardown(node: ast.AST) -> bool:
+    """
+    True only when a fixture has statements after a top-level return —
+    meaning there is teardown code that will never execute.
+
+    These are both fine — early/conditional returns with no orphaned code:
+        if condition: return value   ← return inside an if, nothing after
+        conn = setup(); return conn  ← return is the final statement
+
+    This is the problem:
+        conn = setup()
+        return conn
+        conn.close()    ← unreachable teardown; should be yield + close
+    """
+    body = node.body
+    for i, stmt in enumerate(body):
+        # Top-level return that is not the last statement
+        if isinstance(stmt, ast.Return) and i < len(body) - 1:
+            return True
+    return False
+
 def yield_count(node: ast.AST) -> int:
     return sum(1 for n in ast.walk(node) if isinstance(n, ast.Yield))
 
