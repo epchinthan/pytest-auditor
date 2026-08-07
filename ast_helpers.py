@@ -100,6 +100,33 @@ def get_marks(node: ast.AST) -> list[str]:
         marks.extend(re.findall(r"pytest\.mark\.(\w+)", unparse(d)))
     return marks
 
+
+def get_module_marks(tree: ast.AST) -> list[str]:
+    """
+    Collect marks from module-level pytestmark assignments.
+    Handles all common forms:
+
+        pytestmark = pytest.mark.slow
+        pytestmark = pytest.mark.slow()
+        pytestmark = [pytest.mark.slow, pytest.mark.integration]
+    """
+    marks = []
+    for node in ast.iter_child_nodes(tree):
+        # simple assignment: pytestmark = ...
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id == "pytestmark":
+                    marks.extend(re.findall(r"pytest\.mark\.(\w+)", unparse(node.value)))
+        # annotated assignment: pytestmark: list = ...
+        if (
+            isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and node.target.id == "pytestmark"
+            and node.value
+        ):
+            marks.extend(re.findall(r"pytest\.mark\.(\w+)", unparse(node.value)))
+    return marks
+
 def has_asyncio_mark(node: ast.AST) -> bool:
     return any("asyncio" in unparse(d) or "anyio" in unparse(d)
                for d in node.decorator_list)

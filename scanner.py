@@ -178,6 +178,7 @@ def analyse_file(
 
     # ── walk tests ─────────────────────────────────────────────────────────
     known_fixture_names = set(file_fixtures) | set(conftest_fixtures)
+    module_marks = h.get_module_marks(tree)   # pytestmark = pytest.mark.X
     name_lines: dict[str, list[int]] = defaultdict(list)
     fixture_usage: Counter = Counter()
 
@@ -220,7 +221,7 @@ def analyse_file(
                 "class":   class_name,
                 "asserts": h.assert_count(node),
                 "async":   h.is_async(node),
-                "marks":   h.get_marks(node),
+                "marks":   h.get_marks(node) + module_marks,
                 "lines":   len(node.body),
                 "flags":   [i.code for i in issues],
             }
@@ -318,7 +319,7 @@ def scan(root: Path) -> SuiteReport:
             report.files.append(stub)
             break
 
-    # S004: no marks anywhere
+    # S004: no marks anywhere — check both decorator marks and pytestmark assignments
     all_marks = [m for f in report.files for t in f.tests for m in t.get("marks", [])]
     if test_files and not all_marks:
         stub = FileReport(path=str(root))
