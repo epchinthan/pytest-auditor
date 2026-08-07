@@ -360,37 +360,10 @@ def module_level_mock(tree: ast.AST) -> bool:
     return False
 
 
-# ── import / structure ────────────────────────────────────────────────────────
-
-def source_imports(tree: ast.AST) -> list[str]:
-    modules = []
-    for n in ast.walk(tree):
-        if isinstance(n, ast.Import):
-            modules.extend(a.name for a in n.names)
-        if isinstance(n, ast.ImportFrom) and n.module:
-            modules.append(n.module)
-    return modules
-
-def has_no_src_import(tree: ast.AST) -> bool:
-    """True if the file imports nothing that looks like production code."""
-    imports = source_imports(tree)
-    if not imports:
-        return True
-    stdlib_prefixes = {
-        "os", "sys", "re", "json", "time", "datetime", "math",
-        "random", "io", "abc", "copy", "functools", "itertools",
-        "collections", "pathlib", "typing", "dataclasses",
-        "contextlib", "threading", "asyncio", "logging", "warnings",
-        "unittest", "pytest", "mock", "conftest",
-    }
-    return all(
-        any(imp.startswith(p) for p in stdlib_prefixes)
-        for imp in imports
-    )
 
 def all_classes_no_class_fixtures(nodes: list, fixture_meta: dict) -> bool:
     """All tests are inside classes but no class-scoped fixture exists."""
-    has_class = any(isinstance(n, ast.ClassDef) and is_test_class(n) for n in nodes)
+    has_class    = any(isinstance(n, ast.ClassDef) and is_test_class(n) for n in nodes)
     has_top_func = any(is_test_func(n) for n in nodes)
     if not has_class or has_top_func:
         return False

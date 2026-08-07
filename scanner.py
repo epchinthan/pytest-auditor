@@ -127,7 +127,6 @@ def analyse_file(
     report.issues += checks.check_credentials(source, path)
     report.issues += checks.check_unittest_mock_import(tree, path)
     report.issues += checks.check_module_level_mock(tree, path)
-    report.issues += checks.check_no_src_import(tree, path)
 
     # ── collect fixtures ───────────────────────────────────────────────────
     file_fixtures: dict[str, ast.AST] = {}
@@ -234,10 +233,6 @@ def analyse_file(
     report.issues += checks.check_duplicate_names(name_lines, path)
     report.issues += checks.check_empty_file(path, report.test_count, report.fixture_count)
 
-    for fname, meta in fixture_meta.items():
-        report.issues += checks.check_fixture_used_once(
-            fname, fixture_usage[fname], meta["autouse"], path, meta["line"]
-        )
 
     return report
 

@@ -68,13 +68,6 @@ def check_module_level_mock(tree: ast.AST, path: Path) -> list[Issue]:
     return []
 
 
-def check_no_src_import(tree: ast.AST, path: Path) -> list[Issue]:
-    if h.has_no_src_import(tree) and any(h.is_test_func(n) for n in ast.walk(tree)):
-        return [Issue(INFO, "OR10",
-            "No imports from production code — file may not test any real logic",
-            str(path))]
-    return []
-
 
 def check_empty_file(path: Path, test_count: int, fixture_count: int) -> list[Issue]:
     if (
@@ -159,12 +152,6 @@ def check_fixture_shadow(name: str, conftest_fixtures: dict, path: Path, lineno:
     return []
 
 
-def check_fixture_used_once(name: str, usage_count: int, autouse: bool, path: Path, lineno: int) -> list[Issue]:
-    if usage_count == 1 and not autouse:
-        return [Issue(INFO, "FX09",
-            f"Fixture '{name}' is used by only 1 test — consider inlining the setup",
-            str(path), lineno)]
-    return []
 
 
 # ── test-level checks ─────────────────────────────────────────────────────────
