@@ -1,34 +1,23 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # pytest-auditor — Makefile
-#
-# Usage:
-#   make audit                  scan ./tests → pytest_audit.html
-#   make audit TESTS=src/tests  custom path
-#   make audit-strict           fail if score < 80
-#   make install                install dependencies only
 # ─────────────────────────────────────────────────────────────────────────────
 
-PYTHON      ?= python3
-TESTS       ?= tests
-HTML        ?= pytest_audit.html
-SCORE       ?= 80
+PYTHON  ?= python3
+TESTS   ?= tests
+HTML    ?= pytest_audit.html
+SCORE   ?= 80
 
-# Absolute path to the directory containing this Makefile.
-# pytest_auditor/ must be a subfolder here.
 HERE := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 
 .PHONY: audit audit-strict install help
 
 help:
 	@echo ""
-	@echo "  pytest-auditor"
-	@echo ""
-	@echo "  make audit                   scan \$$TESTS → \$$HTML"
-	@echo "  make audit TESTS=src/tests   custom tests path"
-	@echo "  make audit HTML=out.html     custom output path"
-	@echo "  make audit-strict            fail if score < \$$SCORE (default: 80)"
-	@echo "  make audit-strict SCORE=90   custom threshold"
-	@echo "  make install                 install dependencies only"
+	@echo "  make audit                    scan \$$TESTS → \$$HTML"
+	@echo "  make audit TESTS=src/tests    custom path"
+	@echo "  make audit HTML=out.html      custom output"
+	@echo "  make audit-strict             fail if score < \$$SCORE"
+	@echo "  make audit-strict SCORE=90    custom threshold"
 	@echo ""
 
 install:
@@ -37,7 +26,13 @@ install:
 	 echo "  note: could not install rich — run: pip install rich"
 
 audit: install
-	cd $(HERE) && $(PYTHON) -m pytest_auditor $(abspath $(TESTS)) --html $(abspath $(HTML))
+	$(PYTHON) -c "\
+import sys; sys.path.insert(0, '$(HERE)'); \
+from pytest_auditor.__main__ import main; \
+sys.exit(main(['$(abspath $(TESTS))', '--html', '$(abspath $(HTML))']))"
 
 audit-strict: install
-	cd $(HERE) && $(PYTHON) -m pytest_auditor $(abspath $(TESTS)) --html $(abspath $(HTML)) --fail-under $(SCORE)
+	$(PYTHON) -c "\
+import sys; sys.path.insert(0, '$(HERE)'); \
+from pytest_auditor.__main__ import main; \
+sys.exit(main(['$(abspath $(TESTS))', '--html', '$(abspath $(HTML))', '--fail-under', '$(SCORE)']))"
