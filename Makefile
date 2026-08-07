@@ -8,10 +8,13 @@
 #   make install                install dependencies only
 # ─────────────────────────────────────────────────────────────────────────────
 
-PYTHON  ?= python3
-TESTS   ?= tests
-HTML    ?= pytest_audit.html
-SCORE   ?= 80
+PYTHON      ?= python3
+TESTS       ?= tests
+HTML        ?= pytest_audit.html
+SCORE       ?= 80
+
+# Directory containing this Makefile — pytest_auditor/ must live here
+MAKEFILE_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
 .PHONY: audit audit-strict install help
 
@@ -33,7 +36,7 @@ install:
 	$(PYTHON) -m pip install rich --quiet --break-system-packages 2>/dev/null || true
 
 audit: install
-	$(PYTHON) -m pytest_auditor $(TESTS) --html $(HTML)
+	PYTHONPATH=$(MAKEFILE_DIR) $(PYTHON) -m pytest_auditor $(TESTS) --html $(HTML)
 
 audit-strict: install
-	$(PYTHON) -m pytest_auditor $(TESTS) --html $(HTML) --fail-under $(SCORE)
+	PYTHONPATH=$(MAKEFILE_DIR) $(PYTHON) -m pytest_auditor $(TESTS) --html $(HTML) --fail-under $(SCORE)
