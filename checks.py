@@ -279,17 +279,7 @@ def check_test(
             f"{pfx}{name}: asyncio.run() inside test — use async def + asyncio_mode='auto'",
             rel, node.lineno))
 
-    # ── sleep / print / except ────────────────────────────────────────────
-    if h.has_sleep(node):
-        # Check if it looks like an integration test (has integration/slow/e2e mark)
-        INTEGRATION_MARKS = {"integration", "slow", "e2e", "functional", "acceptance"}
-        is_integration = bool(set(marks) & INTEGRATION_MARKS)
-        level = INFO if is_integration else WARNING
-        issues.append(Issue(level, "T011",
-            f"{pfx}{name}: time.sleep() found — "
-            + ("acceptable in integration tests but consider event-based waiting"
-               if is_integration else "mock time instead; sleep makes tests slow and fragile"),
-            rel, node.lineno))
+    # ── print / except ────────────────────────────────────────────────
 
     if h.has_print(node):
         issues.append(Issue(INFO, "T012",

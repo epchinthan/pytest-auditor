@@ -315,13 +315,6 @@ def modifies_environ_directly(node: ast.AST) -> bool:
 
 # ── async ─────────────────────────────────────────────────────────────────────
 
-def has_sleep(node: ast.AST) -> bool:
-    for n in ast.walk(node):
-        if isinstance(n, ast.Call):
-            fn = unparse(n.func)
-            if fn in ("time.sleep", "asyncio.sleep", "sleep"):
-                return True
-    return False
 
 def has_asyncio_sleep_zero(node: ast.AST) -> bool:
     for n in ast.walk(node):
@@ -422,34 +415,24 @@ def all_classes_no_class_fixtures(nodes: list, fixture_meta: dict) -> bool:
 def is_called_in_tree(func_name: str, tree: ast.AST) -> bool:
     """
     True if func_name is referenced anywhere in the tree outside its own
-    definition — covers all usage patterns:
+    definition. Covers all usage patterns:
 
-        check_user(x)                      direct call
-        run(check_user)                    passed as positional argument
-        mock.side_effect = check_user      passed as keyword argument
-        validators = [check_user]          referenced in a list/dict
-        steps = {'v': check_user}          referenced in a dict value
+        check_user(x)                       bare call
+        self.check_user(x)                  method call on self
+        self.check_user                     attribute reference
+        run(check_user)                     passed as positional arg
+        mock.side_effect = check_user       assigned as value
+        validators = [check_user]           in a list/dict
     """
     for node in ast.walk(tree):
-        # skip the function's own definition
-        if (
-            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and node.name == func_name
-        ):
-            continue
-
-        # direct call: check_user(...)
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == func_name
-        ):
-            return True
-
-        # any other Name reference — passed as argument, assigned, etc.
+        # bare Name reference anywhere in the tree
+        # (the function's own name inside its def body is also a Name node
+        # but it appears as part of the FunctionDef, not a standalone Name)
         if isinstance(node, ast.Name) and node.id == func_name:
             return True
-
+        # attribute access: self.check_user or obj.check_user
+        if isinstance(node, ast.Attribute) and node.attr == func_name:
+            return True
     return False
 
 
