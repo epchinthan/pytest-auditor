@@ -4,7 +4,17 @@ Self-contained HTML report — no external CDN.
 """
 from __future__ import annotations
 from pathlib import Path
-from .analyse import SuiteReport
+
+import importlib.util as _ilu, sys as _sys, pathlib as _pl
+def _sibling(name):
+    full = f"_pytest_auditor_{name}"
+    if full in _sys.modules: return _sys.modules[full]
+    spec = _ilu.spec_from_file_location(full, _pl.Path(__file__).resolve().parent / f"{name}.py")
+    mod = _ilu.module_from_spec(spec); _sys.modules[full] = mod; spec.loader.exec_module(mod)
+    return mod
+
+_am = _sibling('analyse')
+SuiteReport = _am.SuiteReport
 
 
 def _sc(score: int) -> str:
