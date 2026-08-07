@@ -420,15 +420,37 @@ def all_classes_no_class_fixtures(nodes: list, fixture_meta: dict) -> bool:
 
 
 def is_called_in_tree(func_name: str, tree: ast.AST) -> bool:
-    """True if func_name appears as a call anywhere in the tree."""
-    return any(
-        isinstance(n, ast.Call)
-        and (
-            (isinstance(n.func, ast.Name) and n.func.id == func_name)
-            or (isinstance(n.func, ast.Attribute) and n.func.attr == func_name)
-        )
-        for n in ast.walk(tree)
-    )
+    """
+    True if func_name is referenced anywhere in the tree outside its own
+    definition — covers all usage patterns:
+
+        check_user(x)                      direct call
+        run(check_user)                    passed as positional argument
+        mock.side_effect = check_user      passed as keyword argument
+        validators = [check_user]          referenced in a list/dict
+        steps = {'v': check_user}          referenced in a dict value
+    """
+    for node in ast.walk(tree):
+        # skip the function's own definition
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == func_name
+        ):
+            continue
+
+        # direct call: check_user(...)
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == func_name
+        ):
+            return True
+
+        # any other Name reference — passed as argument, assigned, etc.
+        if isinstance(node, ast.Name) and node.id == func_name:
+            return True
+
+    return False
 
 
 def has_pytest_raises(node: ast.AST) -> bool:
