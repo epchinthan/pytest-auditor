@@ -3,9 +3,13 @@ pytest_auditor/html_report.py  v3
 Self-contained HTML report — no external CDN.
 """
 from __future__ import annotations
+
+import importlib.util as _ilu
+import pathlib as _pl
+import sys as _sys
 from pathlib import Path
 
-import importlib.util as _ilu, sys as _sys, pathlib as _pl
+
 def _sibling(name):
     full = f"_pytest_auditor_{name}"
     if full in _sys.modules: return _sys.modules[full]

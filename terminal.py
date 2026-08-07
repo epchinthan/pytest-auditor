@@ -5,20 +5,18 @@ Rich terminal output for the audit report.
 """
 from __future__ import annotations
 
+import importlib.util as _ilu
+import pathlib as _pl
+import sys as _sys
 from pathlib import Path
 
+from rich import box
 from rich.console import Console
 from rich.panel import Panel
-from rich.table import Table
-from rich.text import Text
-from rich import box
-from rich.columns import Columns
-from rich.padding import Padding
 from rich.rule import Rule
-from rich.progress import track
+from rich.table import Table
 
 
-import importlib.util as _ilu, sys as _sys, pathlib as _pl
 def _sibling(name):
     full = f"_pytest_auditor_{name}"
     if full in _sys.modules: return _sys.modules[full]
@@ -178,8 +176,8 @@ def print_report(report: SuiteReport) -> None:
 
     # ── footer ────────────────────────────────────────────────────────────
     console.print(Panel(
-        f"[dim]Run [bold]pytest --quality-report[/bold] to integrate into your test run  "
-        f"·  Add [bold]--html-report=report.html[/bold] for full HTML output[/dim]",
+        "[dim]Run [bold]pytest --quality-report[/bold] to integrate into your test run  "
+        "·  Add [bold]--html-report=report.html[/bold] for full HTML output[/dim]",
         border_style="dim", padding=(0, 1),
     ))
     console.print()
