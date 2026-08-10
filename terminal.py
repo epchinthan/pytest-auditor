@@ -118,9 +118,13 @@ def print_report(report: SuiteReport) -> None:
             for issue in fr.issues:
                 icon  = LEVEL_ICON[issue.level]
                 style = LEVEL_STYLE[issue.level]
-                loc   = f"[dim]:{issue.line}[/dim]" if issue.line else ""
-                console.print(f"    [{style}]{icon}[/{style}] "
-                              f"[dim]{issue.code}[/dim]{loc}  {issue.message}")
+                loc   = f"[dim cyan]line {issue.line}[/dim cyan]  " if issue.line else ""
+                console.print(
+                    f"    [{style}]{icon}[/{style}] "
+                    f"[dim]{issue.code}[/dim]  "
+                    f"{loc}"
+                    f"{issue.message}"
+                )
             console.print()
 
     # ── issue summary table ───────────────────────────────────────────────
