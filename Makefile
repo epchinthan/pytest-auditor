@@ -1,6 +1,6 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # pytest-auditor — Makefile
-# All .py files must sit in the same folder as this Makefile.
+# __main__.py lives at root. Subpackages: core/ io/ scanning/
 # ─────────────────────────────────────────────────────────────────────────────
 
 PYTHON  ?= python3

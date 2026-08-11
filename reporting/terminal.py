@@ -5,27 +5,14 @@ Rich terminal output for the audit report.
 """
 from __future__ import annotations
 
-import importlib.util as _ilu
-import pathlib as _pl
-import sys as _sys
 from pathlib import Path
 
+from core.models import SuiteReport
 from rich import box
 from rich.console import Console
 from rich.panel import Panel
 from rich.rule import Rule
 from rich.table import Table
-
-
-def _sibling(name):
-    full = f"_pytest_auditor_{name}"
-    if full in _sys.modules: return _sys.modules[full]
-    spec = _ilu.spec_from_file_location(full, _pl.Path(__file__).resolve().parent / f"{name}.py")
-    mod = _ilu.module_from_spec(spec); _sys.modules[full] = mod; spec.loader.exec_module(mod)
-    return mod
-
-_am = _sibling('analyse')
-SuiteReport = _am.SuiteReport; FileReport = _am.FileReport; Issue = _am.Issue
 
 console = Console()
 

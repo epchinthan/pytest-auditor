@@ -11,8 +11,8 @@ import ast
 import re
 from pathlib import Path
 
-import ast_helpers as h
-from models import (
+from core import ast_helpers as h
+from core.models import (
     BUILTIN_MARKS,
     CREDENTIAL_PATTERN,
     ERROR,
