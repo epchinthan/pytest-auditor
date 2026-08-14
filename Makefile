@@ -15,7 +15,7 @@ help:
 	@echo ""
 	@echo "  make audit                    scan \$$TESTS → \$$HTML"
 	@echo "  make audit TESTS=src/tests    custom path"
-	@echo "  make audit TESTS=~/my/tests   ~ paths work too"
+	@echo "  make audit TESTS=~/my/tests   tilde paths work"
 	@echo "  make audit HTML=out.html      custom output path"
 	@echo "  make audit-strict             fail if score < \$$SCORE"
 	@echo "  make audit-strict SCORE=90    custom threshold"
@@ -29,20 +29,7 @@ install:
 	|| echo "  warning: could not install rich. Run: pip install rich"
 
 audit: install
-	@echo "  Python   : $(PYTHON)"
-	@echo "  HERE     : $(HERE)"
-	@echo "  TESTS    : $(TESTS)"
-	@echo "  HTML     : $(HTML)"
-	@TESTS_ABS=$$($(PYTHON) -c "import os; print(os.path.abspath(os.path.expanduser('$(TESTS)')))") && \
-	 echo "  TESTS_ABS: $$TESTS_ABS"
-	@HTML_ABS=$$($(PYTHON) -c "import os; print(os.path.abspath(os.path.expanduser('$(HTML)')))") && \
-	 echo "  HTML_ABS : $$HTML_ABS"
-	$(PYTHON) "$(HERE)/__main__.py" \
-		"$$($(PYTHON) -c "import os; print(os.path.abspath(os.path.expanduser('$(TESTS)')))")" \
-		--html "$$($(PYTHON) -c "import os; print(os.path.abspath(os.path.expanduser('$(HTML)')))")"
+	$(PYTHON) "$(HERE)/__main__.py" "$(TESTS)" --html "$(HTML)"
 
 audit-strict: install
-	$(PYTHON) "$(HERE)/__main__.py" \
-		"$$($(PYTHON) -c "import os; print(os.path.abspath(os.path.expanduser('$(TESTS)')))")" \
-		--html "$$($(PYTHON) -c "import os; print(os.path.abspath(os.path.expanduser('$(HTML)')))")" \
-		--fail-under $(SCORE)
+	$(PYTHON) "$(HERE)/__main__.py" "$(TESTS)" --html "$(HTML)" --fail-under $(SCORE)
