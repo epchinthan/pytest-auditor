@@ -26,9 +26,11 @@ help:
 	@echo ""
 
 install:
-	$(PYTHON) -m pip install rich --quiet --disable-pip-version-check 2>/dev/null || \
-	$(PYTHON) -m pip install rich --quiet --break-system-packages 2>/dev/null || \
-	echo "  note: could not install rich — run: pip install rich"
+	@$(PYTHON) -c "import rich" 2>/dev/null \
+	|| $(PYTHON) -m pip install rich --quiet --disable-pip-version-check 2>/dev/null \
+	|| $(PYTHON) -m pip install rich --quiet --break-system-packages 2>/dev/null \
+	|| $(PYTHON) -m pip install rich --quiet --user 2>/dev/null \
+	|| echo "  warning: could not install rich. Run: pip install rich"
 
 audit: install
 	$(eval TESTS_ABS := $(shell $(call RESOLVE,$(TESTS))))
