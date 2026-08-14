@@ -32,24 +32,47 @@ def read_config(root: Path) -> tuple[list[str], list[str]]:
     marks: list[str] = []
     paths: list[str] = []
 
-    for candidate in (root / "pyproject.toml", root.parent / "pyproject.toml"):
-        if candidate.exists():
-            text = candidate.read_text(encoding="utf-8")
-            m = re.search(r"markers\s*=\s*\[(.*?)\]", text, re.DOTALL)
-            if m:
-                marks = re.findall(r'["\'](\w+)["\']', m.group(1))
-            m2 = re.search(r"testpaths\s*=\s*\[(.*?)\]", text, re.DOTALL)
-            if m2:
-                paths = re.findall(r'["\']([^"\']+)["\']', m2.group(1))
+    # A user may audit a nested test directory (for example tests/test_suites),
+    # while pytest.ini lives at the repository root. Walk upwards just as
+    # pytest does when discovering its configuration instead of checking only
+    # the immediate parent.
+    search_roots = (root, *root.parents)
+
+    config_path: Path | None = None
+    for directory in search_roots:
+        # pytest.ini takes precedence over pyproject.toml in the same directory.
+        for name in ("pytest.ini", "pyproject.toml"):
+            candidate = directory / name
+            if candidate.is_file():
+                config_path = candidate
+                break
+        if config_path:
             break
 
-    for candidate in (root / "pytest.ini", root.parent / "pytest.ini"):
-        if candidate.exists() and not marks:
-            text = candidate.read_text(encoding="utf-8")
-            sec = re.search(r"\[pytest\](.*?)(?:\[|$)", text, re.DOTALL)
-            if sec:
-                marks.extend(re.findall(r"^\s+(\w+):", sec.group(1), re.MULTILINE))
-            break
+    if config_path is None:
+        return marks, paths
+
+    text = config_path.read_text(encoding="utf-8")
+    if config_path.name == "pytest.ini":
+        sec = re.search(r"\[pytest\](.*?)(?:^\[|\Z)", text, re.DOTALL | re.MULTILINE)
+        if sec:
+            marks.extend(re.findall(r"^\s+([A-Za-z_][\w.-]*)\s*:", sec.group(1), re.MULTILINE))
+            testpaths = re.search(
+                r"^\s*testpaths\s*=\s*(.*(?:\n[ \t]+.*)*)",
+                sec.group(1), re.MULTILINE,
+            )
+            if testpaths:
+                paths = testpaths.group(1).split()
+    else:
+        marker_list = re.search(r"markers\s*=\s*\[(.*?)\]", text, re.DOTALL)
+        if marker_list:
+            marks = re.findall(
+                r'["\']\s*([A-Za-z_][\w.-]*)\s*(?::[^"\']*)?["\']',
+                marker_list.group(1),
+            )
+        configured_paths = re.search(r"testpaths\s*=\s*\[(.*?)\]", text, re.DOTALL)
+        if configured_paths:
+            paths = re.findall(r'["\']([^"\']+)["\']', configured_paths.group(1))
 
     return marks, paths
 
