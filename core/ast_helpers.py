@@ -260,13 +260,6 @@ def multi_raises(node: ast.AST) -> int:
     return count
 
 
-def has_time_sleep(node: ast.AST) -> bool:
-    return any(
-        isinstance(n, ast.Call) and unparse(n.func) == "time.sleep"
-        for n in ast.walk(node)
-    )
-
-
 def broad_raises(node: ast.AST) -> list[tuple[int, str]]:
     """Return broad exception names used with pytest.raises()."""
     found = []
@@ -366,6 +359,91 @@ def fixture_default_args(node: ast.AST) -> list[str]:
         if default is not None
     )
     return default_names
+
+
+def yield_without_teardown(node: ast.AST) -> bool:
+    """True when a fixture's final top-level statement is a bare yield expression."""
+    return bool(
+        node.body
+        and isinstance(node.body[-1], ast.Expr)
+        and isinstance(node.body[-1].value, ast.Yield)
+    )
+
+
+def fixture_depends_on_itself(node: ast.AST) -> bool:
+    return any(arg.arg == node.name for arg in (*node.args.posonlyargs, *node.args.args))
+
+
+def parametrize_problems(node: ast.AST) -> tuple[set[str], set[str], list[int]]:
+    """Return missing signature names, duplicate arg names, and bad row indexes."""
+    signature = {
+        arg.arg
+        for arg in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs)
+    }
+    missing: set[str] = set()
+    duplicate: set[str] = set()
+    bad_rows: list[int] = []
+
+    for decorator in node.decorator_list:
+        if not isinstance(decorator, ast.Call) or "parametrize" not in unparse(decorator.func):
+            continue
+        if not decorator.args:
+            continue
+
+        raw_names = decorator.args[0]
+        names: list[str] = []
+        if isinstance(raw_names, ast.Constant) and isinstance(raw_names.value, str):
+            names = [name.strip() for name in raw_names.value.split(",") if name.strip()]
+        elif isinstance(raw_names, (ast.List, ast.Tuple)):
+            names = [
+                item.value
+                for item in raw_names.elts
+                if isinstance(item, ast.Constant) and isinstance(item.value, str)
+            ]
+        if not names:
+            continue
+
+        missing.update(name for name in names if name not in signature)
+        duplicate.update(name for name in names if names.count(name) > 1)
+
+        if len(names) <= 1 or len(decorator.args) < 2:
+            continue
+        values = decorator.args[1]
+        if not isinstance(values, (ast.List, ast.Tuple)):
+            continue
+        for index, row in enumerate(values.elts):
+            if isinstance(row, ast.Call) and unparse(row.func) == "pytest.param":
+                width = len(row.args)
+            elif isinstance(row, (ast.List, ast.Tuple)):
+                width = len(row.elts)
+            else:
+                width = 1
+            if width != len(names):
+                bad_rows.append(index)
+
+    return missing, duplicate, bad_rows
+
+
+def direct_chdir(node: ast.AST) -> list[int]:
+    return [
+        n.lineno for n in ast.walk(node)
+        if isinstance(n, ast.Call) and unparse(n.func) == "os.chdir"
+    ]
+
+
+def direct_sys_path_mutation(node: ast.AST) -> list[int]:
+    lines = []
+    for n in ast.walk(node):
+        if isinstance(n, ast.Call) and unparse(n.func) in {
+            "sys.path.append", "sys.path.extend", "sys.path.insert", "sys.path.remove",
+            "sys.path.pop", "sys.path.clear",
+        }:
+            lines.append(n.lineno)
+        elif isinstance(n, (ast.Assign, ast.AugAssign, ast.Delete)):
+            targets = n.targets if isinstance(n, ast.Assign) else [n.target]
+            if any(unparse(target).startswith("sys.path") for target in targets):
+                lines.append(n.lineno)
+    return lines
 
 
 def has_non_assert_verification(node: ast.AST) -> bool:

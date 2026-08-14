@@ -15,11 +15,13 @@ def _sc(score: int) -> str:
     return "#dc2626"
 
 def _badge(level: str) -> str:
-    S = {"error":   ("background:#fee2e2;color:#991b1b;border:1px solid #fca5a5", "✖"),
-         "warning": ("background:#fef3c7;color:#92400e;border:1px solid #fcd34d", "⚠"),
-         "info":    ("background:#dbeafe;color:#1e40af;border:1px solid #93c5fd", "ℹ")}
-    st, ic = S.get(level, ("","?"))
-    return f'<span style="font-size:11px;font-weight:600;padding:2px 7px;border-radius:4px;{st}">{ic} {level}</span>'
+    styles = {
+        "error": "background:#fee2e2;color:#991b1b;border:1px solid #fca5a5",
+        "warning": "background:#fef3c7;color:#92400e;border:1px solid #fcd34d",
+        "info": "background:#dbeafe;color:#1e40af;border:1px solid #93c5fd",
+    }
+    style = styles.get(level, "")
+    return f'<span style="font-size:11px;font-weight:600;padding:2px 7px;border-radius:4px;{style}">{level.upper()}</span>'
 
 def generate_html(report: SuiteReport, out_path: Path) -> None:
     sc = report.score
@@ -55,9 +57,9 @@ def generate_html(report: SuiteReport, out_path: Path) -> None:
         ne = sum(1 for i in fr.issues if i.level == "error")
         nw = sum(1 for i in fr.issues if i.level == "warning")
         ni = sum(1 for i in fr.issues if i.level == "info")
-        badges = (f'<span style="color:#dc2626;font-weight:600">✖ {ne}</span> ' if ne else "") + \
-                 (f'<span style="color:#d97706;font-weight:600">⚠ {nw}</span> ' if nw else "") + \
-                 (f'<span style="color:#1e40af">ℹ {ni}</span>' if ni else "")
+        badges = (f'<span style="color:#dc2626;font-weight:600">ERROR {ne}</span> ' if ne else "") + \
+                 (f'<span style="color:#d97706;font-weight:600">WARNING {nw}</span> ' if nw else "") + \
+                 (f'<span style="color:#1e40af">INFO {ni}</span>' if ni else "")
         bg = "#fee2e2" if ne else "#fef3c7" if nw else "#f0fdf4" if not fr.issues else "#ffffff"
         file_rows.append(
             f'<tr style="background:{bg}">'
@@ -212,7 +214,6 @@ def generate_html(report: SuiteReport, out_path: Path) -> None:
         ("T008","info",   "@parametrize without readable id= names"),
         ("T009","info",   "@parametrize with only 1 case — use a regular test"),
         ("T010","info",   "@parametrize with >20 cases — consider loading from CSV/JSON"),
-        ("T011","warning","time.sleep() in test — mock time instead"),
         ("T012","info",   "print() found — likely debugging code left behind"),
         ("T013","warning","Bare except / except Exception: pass — swallows failures"),
         ("T014","warning","@skip without reason= — document why it's skipped"),
@@ -234,6 +235,9 @@ def generate_html(report: SuiteReport, out_path: Path) -> None:
         ("T030","info",   "pytest.fail() called without a message"),
         ("T031","warning","Assertion inside except block — prefer pytest.raises()"),
         ("T032","warning","Debugger call left in test"),
+        ("T037","error",  "Parametrized argument name absent from test signature"),
+        ("T038","error",  "Duplicate @parametrize argument name"),
+        ("T039","error",  "Parametrize row has the wrong number of values"),
         # Mocking
         ("MK01","info",   "Mock patched but no assert_called* — patch may never be verified"),
         ("MK02","info",   "unittest.mock.patch used directly — prefer mocker.patch"),
@@ -260,6 +264,9 @@ def generate_html(report: SuiteReport, out_path: Path) -> None:
         ("FX07","info",   "Fixture parameter name shadows a Python builtin"),
         ("FX08","info",   "Fixture name shadows a fixture from a parent conftest.py"),
         ("FX09","warning","Fixture function has a default parameter value"),
+        ("FX10","info",   "Fixture ends with yield but has no teardown"),
+        ("FX11","warning","Fixture name defined more than once in the same file"),
+        ("FX12","info",   "Fixture requests a fixture with the same name"),
         # Suite structure
         ("S001","info",   "No conftest.py in tests root"),
         ("S002","info",   "Test file >200 lines — consider splitting"),
@@ -277,8 +284,12 @@ def generate_html(report: SuiteReport, out_path: Path) -> None:
         # Safety
         ("SA01","warning","open(..., 'w') with non-tmp path — use tmp_path to avoid residue"),
         ("SA02","warning","os.environ modified directly — use monkeypatch.setenv() instead"),
+        ("SA03","warning","os.chdir() used directly — use monkeypatch.chdir()"),
+        ("SA04","warning","sys.path modified directly — use monkeypatch.syspath_prepend()"),
         # Marks
         ("M001","warning","Unregistered custom mark — add to markers in pyproject.toml"),
+        ("M002","warning","Unregistered custom mark applied to a test class"),
+        ("M003","warning","Unregistered custom mark assigned through module pytestmark"),
     ]
 
     level_colors = {"error":"#dc2626","warning":"#d97706","info":"#1e40af"}
@@ -407,17 +418,17 @@ input[type=search]:focus {{ border-color:#1c99c7 }}
 <!-- issues -->
 <section>
   <div class="sec-head">
-    ✖ Issues <span class="cnt">{report.total_issues}</span>
+    Issues <span class="cnt">{report.total_issues}</span>
     <div style="margin-left:auto;font-size:11px;display:flex;gap:6px">
-      <span style="background:rgba(220,38,38,.25);color:#fca5a5;padding:2px 7px;border-radius:8px">✖ error=8pts</span>
-      <span style="background:rgba(217,119,6,.25);color:#fcd34d;padding:2px 7px;border-radius:8px">⚠ warn=3pts</span>
-      <span style="background:rgba(29,130,199,.25);color:#93c5fd;padding:2px 7px;border-radius:8px">ℹ info=1pt</span>
+      <span style="background:rgba(220,38,38,.25);color:#fca5a5;padding:2px 7px;border-radius:8px">ERROR = 8 pts</span>
+      <span style="background:rgba(217,119,6,.25);color:#fcd34d;padding:2px 7px;border-radius:8px">WARNING = 3 pts</span>
+      <span style="background:rgba(29,130,199,.25);color:#93c5fd;padding:2px 7px;border-radius:8px">INFO = 1 pt</span>
     </div>
   </div>
   <div class="filter-bar">
     <input type="search" id="iss-q" placeholder="Filter issues…" oninput="filterTbl('iss-tbl',this.value)">
-    <button class="btn" style="background:#fee2e2;color:#991b1b;border-color:#fca5a5" onclick="filterLvl('error')">✖ Errors</button>
-    <button class="btn" style="background:#fef3c7;color:#92400e;border-color:#fcd34d" onclick="filterLvl('warning')">⚠ Warnings</button>
+    <button class="btn" style="background:#fee2e2;color:#991b1b;border-color:#fca5a5" onclick="filterLvl('error')">ERROR</button>
+    <button class="btn" style="background:#fef3c7;color:#92400e;border-color:#fcd34d" onclick="filterLvl('warning')">WARNING</button>
     <button class="btn" style="background:#f1f5f9;color:#374151;border-color:#e2e8f0" onclick="filterLvl('')">All</button>
   </div>
   <table id="iss-tbl">

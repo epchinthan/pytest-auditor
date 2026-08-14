@@ -141,6 +141,17 @@ def check_fixture(node: ast.AST, path: Path) -> list[Issue]:
             "pytest resolves fixture parameters by name, not by defaults",
             rel, node.lineno))
 
+    if h.yield_without_teardown(node):
+        issues.append(Issue(INFO, "FX10",
+            f"Fixture '{name}' ends with yield but has no teardown — return the value instead",
+            rel, node.lineno))
+
+    if h.fixture_depends_on_itself(node):
+        issues.append(Issue(INFO, "FX12",
+            f"Fixture '{name}' requests a fixture with the same name — "
+            "verify this is an intentional parent-fixture override",
+            rel, node.lineno))
+
     PYTEST_FIXTURE_PARAMS = {'request', 'tmp_path', 'capsys', 'capfd', 'monkeypatch', 'caplog', 'pytestconfig'}
     for arg in node.args.args:
         if arg.arg in PYTHON_BUILTINS and arg.arg not in PYTEST_FIXTURE_PARAMS:
@@ -269,6 +280,16 @@ def check_test(
             f"{pfx}{name}: os.environ modified directly — use monkeypatch.setenv()",
             rel, node.lineno))
 
+    for line in h.direct_chdir(node):
+        issues.append(Issue(WARNING, "SA03",
+            f"{pfx}{name}: os.chdir() changes process-wide cwd — use monkeypatch.chdir()",
+            rel, line))
+
+    for line in h.direct_sys_path_mutation(node):
+        issues.append(Issue(WARNING, "SA04",
+            f"{pfx}{name}: sys.path modified directly — use monkeypatch.syspath_prepend()",
+            rel, line))
+
     # ── async ──────────────────────────────────────────────────────────────
     if is_async and not h.has_asyncio_mark(node) and not h.asyncio_mode_is_auto(tree):
         issues.append(Issue(INFO, "T007",
@@ -284,12 +305,6 @@ def check_test(
     if h.has_asyncio_run(node):
         issues.append(Issue(WARNING, "T023",
             f"{pfx}{name}: asyncio.run() inside test — use async def + asyncio_mode='auto'",
-            rel, node.lineno))
-
-    if h.has_time_sleep(node):
-        issues.append(Issue(WARNING, "T011",
-            f"{pfx}{name}: time.sleep() slows the suite and may cause flaky timing — "
-            "mock time or wait on an observable condition",
             rel, node.lineno))
 
     for line, exception in h.broad_raises(node):
@@ -385,6 +400,22 @@ def check_test(
             f"{pfx}{name}: parametrize id with spaces/brackets — makes -k filtering awkward",
             rel, node.lineno))
 
+    missing_params, duplicate_params, bad_rows = h.parametrize_problems(node)
+    if missing_params:
+        issues.append(Issue(ERROR, "T037",
+            f"{pfx}{name}: parametrized name(s) absent from test signature: "
+            f"{sorted(missing_params)}",
+            rel, node.lineno))
+    if duplicate_params:
+        issues.append(Issue(ERROR, "T038",
+            f"{pfx}{name}: duplicate parametrize argument name(s): {sorted(duplicate_params)}",
+            rel, node.lineno))
+    if bad_rows:
+        issues.append(Issue(ERROR, "T039",
+            f"{pfx}{name}: parametrize row(s) have the wrong number of values at "
+            f"zero-based indexes {bad_rows}",
+            rel, node.lineno))
+
     # ── naming ─────────────────────────────────────────────────────────────
     if VAGUE_NAMES.match(name):
         issues.append(Issue(WARNING, "N006",
@@ -432,6 +463,17 @@ def check_test(
             rel, node.lineno))
 
     return issues
+
+
+def check_registered_marks(
+    marks: list[str], registered_marks: set[str], path: Path, lineno: int, owner: str,
+) -> list[Issue]:
+    return [
+        Issue(WARNING, "M002" if owner.startswith("class ") else "M003",
+              f"Unregistered mark '@pytest.mark.{mark}' on {owner}", str(path), lineno)
+        for mark in marks
+        if mark not in BUILTIN_MARKS and mark not in registered_marks
+    ]
 
 
 # ── class-level checks ────────────────────────────────────────────────────────

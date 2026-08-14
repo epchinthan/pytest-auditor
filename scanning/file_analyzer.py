@@ -54,6 +54,10 @@ def analyse_file(
         scope   = h.fixture_scope(node)
         autouse = h.fixture_autouse(node)
 
+        if name in file_fixtures:
+            report.issues.append(Issue("warning", "FX11",
+                f"Fixture '{name}' is defined more than once in the same file",
+                rel, node.lineno))
         file_fixtures[name] = node
         fixture_meta[name]  = {
             "name":    name,
@@ -93,6 +97,10 @@ def analyse_file(
     # ── walk test functions ────────────────────────────────────────────────
     known_fixture_names = set(file_fixtures) | set(conftest_fixtures)
     module_marks        = h.get_module_marks(tree)
+    if module_marks:
+        report.issues += checks.check_registered_marks(
+            module_marks, registered_marks, path, 1, "module pytestmark"
+        )
     name_lines: dict[str, list[int]] = defaultdict(list)
     fixture_usage: Counter = Counter()
 
@@ -102,6 +110,10 @@ def analyse_file(
                 if h.is_test_class(node):
                     report.class_count += 1
                     report.issues += checks.check_class(node, path)
+                    report.issues += checks.check_registered_marks(
+                        h.get_marks(node), registered_marks, path, node.lineno,
+                        f"class '{node.name}'",
+                    )
                     walk_tests(node.body, class_name=node.name)
                 else:
                     report.issues += checks.check_non_test_class(node, path)
