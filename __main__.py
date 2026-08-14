@@ -35,7 +35,7 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(
         prog="pytest-auditor",
-        description="Audit a pytest test suite — 59 checks, terminal + HTML report",
+        description="Audit a pytest test suite — 68 checks, terminal + HTML report",
     )
     parser.add_argument("path", nargs="?", default="tests",
                         help="Path to tests directory or single .py file (default: tests/)")

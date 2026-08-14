@@ -134,6 +134,13 @@ def check_fixture(node: ast.AST, path: Path) -> list[Issue]:
             f"Fixture '{name}' yields {h.yield_count(node)} times — only first yield is used",
             rel, node.lineno))
 
+    defaults = h.fixture_default_args(node)
+    if defaults:
+        issues.append(Issue(WARNING, "FX09",
+            f"Fixture '{name}' has default value(s) for {defaults} — "
+            "pytest resolves fixture parameters by name, not by defaults",
+            rel, node.lineno))
+
     PYTEST_FIXTURE_PARAMS = {'request', 'tmp_path', 'capsys', 'capfd', 'monkeypatch', 'caplog', 'pytestconfig'}
     for arg in node.args.args:
         if arg.arg in PYTHON_BUILTINS and arg.arg not in PYTEST_FIXTURE_PARAMS:
@@ -192,7 +199,7 @@ def check_test(
     is_async = h.is_async(node)
 
     # ── assertions ─────────────────────────────────────────────────────────
-    if n_ass == 0 and not h.has_pytest_raises(node):
+    if n_ass == 0 and not h.has_pytest_raises(node) and not h.has_non_assert_verification(node):
         issues.append(Issue(ERROR, "T001",
             f"{pfx}{name}: no assert statements — test proves nothing",
             rel, node.lineno))
@@ -278,6 +285,54 @@ def check_test(
         issues.append(Issue(WARNING, "T023",
             f"{pfx}{name}: asyncio.run() inside test — use async def + asyncio_mode='auto'",
             rel, node.lineno))
+
+    if h.has_time_sleep(node):
+        issues.append(Issue(WARNING, "T011",
+            f"{pfx}{name}: time.sleep() slows the suite and may cause flaky timing — "
+            "mock time or wait on an observable condition",
+            rel, node.lineno))
+
+    for line, exception in h.broad_raises(node):
+        issues.append(Issue(WARNING, "T025",
+            f"{pfx}{name}: pytest.raises({exception}) is too broad — expect a specific exception",
+            rel, line))
+
+    for line in h.raises_with_multiple_statements(node):
+        issues.append(Issue(WARNING, "T026",
+            f"{pfx}{name}: pytest.raises block has multiple statements — "
+            "only the operation expected to raise should be inside",
+            rel, line))
+
+    for line in h.warns_without_match(node):
+        issues.append(Issue(INFO, "T027",
+            f"{pfx}{name}: pytest.warns() has no match= — it may accept an unrelated warning",
+            rel, line))
+
+    duplicate_cases = h.duplicate_parametrize_cases(node)
+    if duplicate_cases:
+        issues.append(Issue(WARNING, "T028",
+            f"{pfx}{name}: duplicate parametrize case(s) at zero-based indexes {duplicate_cases}",
+            rel, node.lineno))
+
+    if h.has_assert_false_literal(node):
+        issues.append(Issue(WARNING, "T029",
+            f"{pfx}{name}: assertion always fails — use pytest.fail('reason')",
+            rel, node.lineno))
+
+    for line in h.pytest_fail_without_message(node):
+        issues.append(Issue(INFO, "T030",
+            f"{pfx}{name}: pytest.fail() has no message explaining the failure",
+            rel, line))
+
+    if h.has_assert_in_except(node):
+        issues.append(Issue(WARNING, "T031",
+            f"{pfx}{name}: assertion inside except block — prefer pytest.raises()",
+            rel, node.lineno))
+
+    for line, call in h.debugger_calls(node):
+        issues.append(Issue(WARNING, "T032",
+            f"{pfx}{name}: debugger call '{call}()' left in test",
+            rel, line))
 
     # ── print / except ────────────────────────────────────────────────
 

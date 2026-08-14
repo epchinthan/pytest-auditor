@@ -260,6 +260,125 @@ def multi_raises(node: ast.AST) -> int:
     return count
 
 
+def has_time_sleep(node: ast.AST) -> bool:
+    return any(
+        isinstance(n, ast.Call) and unparse(n.func) == "time.sleep"
+        for n in ast.walk(node)
+    )
+
+
+def broad_raises(node: ast.AST) -> list[tuple[int, str]]:
+    """Return broad exception names used with pytest.raises()."""
+    found = []
+    for n in ast.walk(node):
+        if not isinstance(n, ast.Call) or unparse(n.func) != "pytest.raises" or not n.args:
+            continue
+        exception = unparse(n.args[0])
+        if exception in {"Exception", "BaseException"}:
+            found.append((n.lineno, exception))
+    return found
+
+
+def raises_with_multiple_statements(node: ast.AST) -> list[int]:
+    lines = []
+    for n in ast.walk(node):
+        if not isinstance(n, ast.With):
+            continue
+        if any(
+            isinstance(item.context_expr, ast.Call)
+            and unparse(item.context_expr.func) == "pytest.raises"
+            for item in n.items
+        ) and len(n.body) > 1:
+            lines.append(n.lineno)
+    return lines
+
+
+def warns_without_match(node: ast.AST) -> list[int]:
+    lines = []
+    for n in ast.walk(node):
+        if (
+            isinstance(n, ast.Call)
+            and unparse(n.func) == "pytest.warns"
+            and not any(k.arg == "match" for k in n.keywords)
+        ):
+            lines.append(n.lineno)
+    return lines
+
+
+def duplicate_parametrize_cases(node: ast.AST) -> list[int]:
+    """Return duplicate case indexes for literal @parametrize sequences."""
+    duplicates = []
+    for decorator in node.decorator_list:
+        if not isinstance(decorator, ast.Call) or "parametrize" not in unparse(decorator.func):
+            continue
+        if len(decorator.args) < 2 or not isinstance(decorator.args[1], (ast.List, ast.Tuple)):
+            continue
+        seen: dict[str, int] = {}
+        for index, case in enumerate(decorator.args[1].elts):
+            key = ast.dump(case, include_attributes=False)
+            if key in seen:
+                duplicates.append(index)
+            else:
+                seen[key] = index
+    return duplicates
+
+
+def has_assert_false_literal(node: ast.AST) -> bool:
+    return any(
+        isinstance(n, ast.Assert)
+        and isinstance(n.test, ast.Constant)
+        and n.test.value in (False, 0, None)
+        for n in ast.walk(node)
+    )
+
+
+def pytest_fail_without_message(node: ast.AST) -> list[int]:
+    return [
+        n.lineno for n in ast.walk(node)
+        if isinstance(n, ast.Call)
+        and unparse(n.func) == "pytest.fail"
+        and not n.args
+        and not any(k.arg in {"reason", "msg"} for k in n.keywords)
+    ]
+
+
+def has_assert_in_except(node: ast.AST) -> bool:
+    return any(
+        isinstance(n, ast.ExceptHandler)
+        and any(isinstance(child, ast.Assert) for stmt in n.body for child in ast.walk(stmt))
+        for n in ast.walk(node)
+    )
+
+
+def debugger_calls(node: ast.AST) -> list[tuple[int, str]]:
+    names = {"breakpoint", "pdb.set_trace", "ipdb.set_trace"}
+    return [
+        (n.lineno, unparse(n.func)) for n in ast.walk(node)
+        if isinstance(n, ast.Call) and unparse(n.func) in names
+    ]
+
+
+def fixture_default_args(node: ast.AST) -> list[str]:
+    positional = [arg.arg for arg in (*node.args.posonlyargs, *node.args.args)]
+    default_names = positional[len(positional) - len(node.args.defaults):]
+    default_names.extend(
+        arg.arg for arg, default in zip(node.args.kwonlyargs, node.args.kw_defaults)
+        if default is not None
+    )
+    return default_names
+
+
+def has_non_assert_verification(node: ast.AST) -> bool:
+    """Recognize common pytest/mock verification calls used without assert statements."""
+    for n in ast.walk(node):
+        if not isinstance(n, ast.Call):
+            continue
+        name = unparse(n.func)
+        if name in {"pytest.fail", "pytest.skip"} or "assert_called" in name:
+            return True
+    return False
+
+
 # ── fixture call detection ────────────────────────────────────────────────────
 
 def calls_fixture(node: ast.AST, known: set[str]) -> list[str]:

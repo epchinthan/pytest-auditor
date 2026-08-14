@@ -226,6 +226,14 @@ def generate_html(report: SuiteReport, out_path: Path) -> None:
         ("T022","info",   "asyncio.sleep(0) — usually unnecessary in tests"),
         ("T023","warning","asyncio.run() inside test — use async def + asyncio_mode='auto'"),
         ("T024","info",   "Parametrize id with spaces/brackets — makes -k filtering awkward"),
+        ("T025","warning","pytest.raises(Exception/BaseException) is too broad"),
+        ("T026","warning","pytest.raises block contains multiple statements"),
+        ("T027","info",   "pytest.warns() has no match= constraint"),
+        ("T028","warning","Duplicate @parametrize test case"),
+        ("T029","warning","Assertion always fails — use pytest.fail() with a reason"),
+        ("T030","info",   "pytest.fail() called without a message"),
+        ("T031","warning","Assertion inside except block — prefer pytest.raises()"),
+        ("T032","warning","Debugger call left in test"),
         # Mocking
         ("MK01","info",   "Mock patched but no assert_called* — patch may never be verified"),
         ("MK02","info",   "unittest.mock.patch used directly — prefer mocker.patch"),
@@ -251,7 +259,7 @@ def generate_html(report: SuiteReport, out_path: Path) -> None:
         ("FX06","warning","Fixture yields more than once — only first yield is used"),
         ("FX07","info",   "Fixture parameter name shadows a Python builtin"),
         ("FX08","info",   "Fixture name shadows a fixture from a parent conftest.py"),
-        ("FX09","info",   "Fixture used by only 1 test — consider inlining the setup"),
+        ("FX09","warning","Fixture function has a default parameter value"),
         # Suite structure
         ("S001","info",   "No conftest.py in tests root"),
         ("S002","info",   "Test file >200 lines — consider splitting"),
@@ -260,7 +268,6 @@ def generate_html(report: SuiteReport, out_path: Path) -> None:
         # Organisation
         ("OR08","warning","Same fixture name in multiple conftest.py files — shadows outer"),
         ("OR09","info",   "All tests in classes but no class-scoped fixture — plain functions may be simpler"),
-        ("OR10","info",   "No imports from production code — file may not test real logic"),
         ("OR11","info",   "No __init__.py in tests — cross-file imports may fail"),
         ("OR12","info",   "Tests nested >4 directories deep — hard to navigate"),
         # Files
