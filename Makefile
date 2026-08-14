@@ -34,13 +34,15 @@ audit: install
 	@echo "  TESTS    : $(TESTS)"
 	@echo "  HTML     : $(HTML)"
 	@TESTS_ABS=$$($(PYTHON) -c "import os; print(os.path.abspath(os.path.expanduser('$(TESTS)')))") && \
-	 HTML_ABS=$$($(PYTHON) -c "import os; print(os.path.abspath(os.path.expanduser('$(HTML)')))") && \
-	 echo "  TESTS_ABS: $$TESTS_ABS" && \
-	 echo "  HTML_ABS : $$HTML_ABS" && \
-	 echo "" && \
-	 $(PYTHON) "$(HERE)/__main__.py" "$$TESTS_ABS" --html "$$HTML_ABS"
+	 echo "  TESTS_ABS: $$TESTS_ABS"
+	@HTML_ABS=$$($(PYTHON) -c "import os; print(os.path.abspath(os.path.expanduser('$(HTML)')))") && \
+	 echo "  HTML_ABS : $$HTML_ABS"
+	$(PYTHON) "$(HERE)/__main__.py" \
+		"$$($(PYTHON) -c "import os; print(os.path.abspath(os.path.expanduser('$(TESTS)')))")" \
+		--html "$$($(PYTHON) -c "import os; print(os.path.abspath(os.path.expanduser('$(HTML)')))")"
 
 audit-strict: install
-	@TESTS_ABS=$$($(PYTHON) -c "import os; print(os.path.abspath(os.path.expanduser('$(TESTS)')))") && \
-	 HTML_ABS=$$($(PYTHON) -c "import os; print(os.path.abspath(os.path.expanduser('$(HTML)')))") && \
-	 $(PYTHON) "$(HERE)/__main__.py" "$$TESTS_ABS" --html "$$HTML_ABS" --fail-under $(SCORE)
+	$(PYTHON) "$(HERE)/__main__.py" \
+		"$$($(PYTHON) -c "import os; print(os.path.abspath(os.path.expanduser('$(TESTS)')))")" \
+		--html "$$($(PYTHON) -c "import os; print(os.path.abspath(os.path.expanduser('$(HTML)')))")" \
+		--fail-under $(SCORE)
