@@ -1,6 +1,5 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # pytest-auditor — Makefile
-# __main__.py lives at root. Subpackages: core/ reporting/ scanning/
 # ─────────────────────────────────────────────────────────────────────────────
 
 PYTHON  ?= python3
@@ -9,9 +8,6 @@ HTML    ?= pytest_audit.html
 SCORE   ?= 80
 
 HERE := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
-
-# Expand ~ and resolve to absolute path via Python (handles ~, ./, ../, absolute)
-RESOLVE = $(PYTHON) -c "import os; print(os.path.abspath(os.path.expanduser('$(1)')))"
 
 .PHONY: audit audit-strict install help
 
@@ -33,11 +29,18 @@ install:
 	|| echo "  warning: could not install rich. Run: pip install rich"
 
 audit: install
-	$(eval TESTS_ABS := $(shell $(call RESOLVE,$(TESTS))))
-	$(eval HTML_ABS  := $(shell $(call RESOLVE,$(HTML))))
-	$(PYTHON) $(HERE)/__main__.py "$(TESTS_ABS)" --html "$(HTML_ABS)"
+	@echo "  Python   : $(PYTHON)"
+	@echo "  HERE     : $(HERE)"
+	@echo "  TESTS    : $(TESTS)"
+	@echo "  HTML     : $(HTML)"
+	@TESTS_ABS=$$($(PYTHON) -c "import os; print(os.path.abspath(os.path.expanduser('$(TESTS)')))") && \
+	 HTML_ABS=$$($(PYTHON) -c "import os; print(os.path.abspath(os.path.expanduser('$(HTML)')))") && \
+	 echo "  TESTS_ABS: $$TESTS_ABS" && \
+	 echo "  HTML_ABS : $$HTML_ABS" && \
+	 echo "" && \
+	 $(PYTHON) "$(HERE)/__main__.py" "$$TESTS_ABS" --html "$$HTML_ABS"
 
 audit-strict: install
-	$(eval TESTS_ABS := $(shell $(call RESOLVE,$(TESTS))))
-	$(eval HTML_ABS  := $(shell $(call RESOLVE,$(HTML))))
-	$(PYTHON) $(HERE)/__main__.py "$(TESTS_ABS)" --html "$(HTML_ABS)" --fail-under $(SCORE)
+	@TESTS_ABS=$$($(PYTHON) -c "import os; print(os.path.abspath(os.path.expanduser('$(TESTS)')))") && \
+	 HTML_ABS=$$($(PYTHON) -c "import os; print(os.path.abspath(os.path.expanduser('$(HTML)')))") && \
+	 $(PYTHON) "$(HERE)/__main__.py" "$$TESTS_ABS" --html "$$HTML_ABS" --fail-under $(SCORE)
