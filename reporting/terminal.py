@@ -21,10 +21,10 @@ LEVEL_STYLE = {
     "warning": "yellow",
     "info":    "cyan",
 }
-LEVEL_ICON = {
-    "error":   "✖",
-    "warning": "⚠",
-    "info":    "ℹ",
+LEVEL_LABEL = {
+    "error":   "ERROR",
+    "warning": "WARNING",
+    "info":    "INFO",
 }
 
 
@@ -103,11 +103,11 @@ def print_report(report: SuiteReport) -> None:
             console.print(f"  [bold white]{rel}[/bold white]  "
                           f"[dim]{fr.test_count} tests · {fr.fixture_count} fixtures[/dim]")
             for issue in fr.issues:
-                icon  = LEVEL_ICON[issue.level]
+                label = LEVEL_LABEL[issue.level]
                 style = LEVEL_STYLE[issue.level]
                 loc   = f"[dim cyan]line {issue.line}[/dim cyan]  " if issue.line else ""
                 console.print(
-                    f"    [{style}]{icon}[/{style}] "
+                    f"    [{style}]{label:<7}[/{style}] "
                     f"[dim]{issue.code}[/dim]  "
                     f"{loc}"
                     f"{issue.message}"
