@@ -52,7 +52,11 @@ def read_config(root: Path) -> tuple[list[str], list[str]]:
     if config_path is None:
         import os
         if os.environ.get("DEBUG_AUDITOR"):
-            print(f"[config] no config file found in search path", flush=True)
+            print(f"[config] no config file found — root={root}", flush=True)
+            for d in list(search_roots)[:5]:
+                for n in ("pytest.ini", "pyproject.toml"):
+                    p = d / n
+                    print(f"  checked {p}  exists={p.exists()}", flush=True)
         return marks, paths
 
     import os
