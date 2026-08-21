@@ -56,10 +56,24 @@ def read_config(root: Path) -> tuple[list[str], list[str]]:
     if config_path.name == "pytest.ini":
         sec = re.search(r"\[pytest\](.*?)(?:^\[|\Z)", text, re.DOTALL | re.MULTILINE)
         if sec:
-            marks.extend(re.findall(r"^\s+([A-Za-z_][\w.-]*)\s*:", sec.group(1), re.MULTILINE))
+            body = sec.group(1)
+            # Find the markers = block and extract names robustly —
+            # handles both "marker: description" and bare "marker" lines
+            m = re.search(
+                r"^\s*markers\s*=\s*(.*?)(?=^\s*\w+\s*=|\Z)",
+                body, re.DOTALL | re.MULTILINE,
+            )
+            if m:
+                for line in m.group(1).splitlines():
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    name = line.split(":")[0].strip()
+                    if re.match(r"^[A-Za-z_][\w.-]*$", name):
+                        marks.append(name)
             testpaths = re.search(
                 r"^\s*testpaths\s*=\s*(.*(?:\n[ \t]+.*)*)",
-                sec.group(1), re.MULTILINE,
+                body, re.MULTILINE,
             )
             if testpaths:
                 paths = testpaths.group(1).split()
