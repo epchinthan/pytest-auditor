@@ -50,18 +50,7 @@ def read_config(root: Path) -> tuple[list[str], list[str]]:
             break
 
     if config_path is None:
-        import os
-        if os.environ.get("DEBUG_AUDITOR"):
-            print(f"[config] no config file found — root={root}", flush=True)
-            for d in list(search_roots)[:5]:
-                for n in ("pytest.ini", "pyproject.toml"):
-                    p = d / n
-                    print(f"  checked {p}  exists={p.exists()}", flush=True)
         return marks, paths
-
-    import os
-    if os.environ.get("DEBUG_AUDITOR"):
-        print(f"[config] found: {config_path}", flush=True)
 
     text = config_path.read_text(encoding="utf-8")
     if config_path.name == "pytest.ini":
@@ -88,9 +77,7 @@ def read_config(root: Path) -> tuple[list[str], list[str]]:
             )
             if testpaths:
                 paths = testpaths.group(1).split()
-            import os
-            if os.environ.get("DEBUG_AUDITOR"):
-                print(f"[config] marks from pytest.ini: {marks}", flush=True)
+
     else:
         marker_list = re.search(r"markers\s*=\s*\[(.*?)\]", text, re.DOTALL)
         if marker_list:

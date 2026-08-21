@@ -23,10 +23,9 @@ from scanning.file_analyzer import analyse_file
 
 def scan(root: Path) -> SuiteReport:
     root        = root.resolve()
-    config_root = root.parent if root.name == "tests" else root
-    reg_marks, _    = read_config(config_root)
+    reg_marks, _    = read_config(root)
     mark_set        = set(reg_marks)
-    cov_pct, cov_miss = read_coverage(config_root)
+    cov_pct, cov_miss = read_coverage(root)
 
     report = SuiteReport(
         root             = str(root),
