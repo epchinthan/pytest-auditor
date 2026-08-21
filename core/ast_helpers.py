@@ -698,7 +698,7 @@ def assert_eq_bool(node: ast.AST) -> list[str]:
         if (isinstance(n, ast.Assert) and isinstance(n.test, ast.Compare)
                 and any(isinstance(op, ast.Eq) for op in n.test.ops)):
                 for comp in n.test.comparators:
-                    if isinstance(comp, ast.Constant) and comp.value in (True, False):
+                    if isinstance(comp, ast.Constant) and isinstance(comp.value, bool):
                         found.append(str(comp.value))
     return found
 
