@@ -677,3 +677,194 @@ def is_builtin_patch_target(target: str) -> bool:
         "builtins.open", "builtins.print", "builtins.input",
     }
     return target in builtin_names or target.startswith("builtins.")
+
+# ── new helpers for additional checks ────────────────────────────────────────
+
+def assert_eq_none(node: ast.AST) -> bool:
+    """assert x == None — should use assert x is None."""
+    for n in ast.walk(node):
+        if (isinstance(n, ast.Assert) and isinstance(n.test, ast.Compare)
+                and any(isinstance(op, ast.Eq) for op in n.test.ops)):
+                for comp in n.test.comparators:
+                    if isinstance(comp, ast.Constant) and comp.value is None:
+                        return True
+    return False
+
+
+def assert_eq_bool(node: ast.AST) -> list[str]:
+    """assert x == True/False — should use assert x / assert not x."""
+    found = []
+    for n in ast.walk(node):
+        if (isinstance(n, ast.Assert) and isinstance(n.test, ast.Compare)
+                and any(isinstance(op, ast.Eq) for op in n.test.ops)):
+                for comp in n.test.comparators:
+                    if isinstance(comp, ast.Constant) and comp.value in (True, False):
+                        found.append(str(comp.value))
+    return found
+
+
+def assert_compound_and(node: ast.AST) -> bool:
+    """assert a and b and c — should be split into separate asserts."""
+    for n in ast.walk(node):
+        if isinstance(n, ast.Assert) and isinstance(n.test, ast.BoolOp) and isinstance(n.test.op, ast.And):
+                return True
+    return False
+
+
+def class_has_init(node: ast.ClassDef) -> bool:
+    """Test class with __init__ — breaks pytest collection."""
+    return any(
+        isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == "__init__"
+        for n in node.body
+    )
+
+
+def test_has_star_args(node: ast.AST) -> bool:
+    """test function with *args or **kwargs — fixtures can't inject."""
+    return bool(node.args.vararg or node.args.kwarg)
+
+
+def fixture_scope_positional(node: ast.AST) -> bool:
+    """@pytest.fixture('module') — scope should be keyword arg."""
+    for d in node.decorator_list:
+        if "pytest.fixture" in unparse(d) and isinstance(d, ast.Call) and d.args:
+            return True
+    return False
+
+
+def fixture_scope_redundant_function(node: ast.AST) -> bool:
+    """@pytest.fixture(scope='function') — 'function' is the default, redundant."""
+    for d in node.decorator_list:
+        src = unparse(d)
+        if "pytest.fixture" in src and "scope='function'" in src or "scope=\"function\"" in src:
+            return True
+    return False
+
+
+def fixture_is_yield_fixture(node: ast.AST) -> bool:
+    """@pytest.yield_fixture is deprecated — use @pytest.fixture with yield."""
+    for d in node.decorator_list:
+        if "yield_fixture" in unparse(d):
+            return True
+    return False
+
+
+def fixture_uses_addfinalizer(node: ast.AST) -> bool:
+    """request.addfinalizer(...) — use yield for teardown instead."""
+    src = unparse(node)
+    return "addfinalizer" in src
+
+
+def fixture_asyncio_mark(node: ast.AST) -> bool:
+    """@pytest.mark.asyncio on a fixture — unnecessary, fixtures don't need it."""
+    return has_asyncio_mark(node) and is_fixture(node)
+
+
+def patch_uses_lambda(node: ast.AST) -> bool:
+    """mocker.patch(x, lambda: y) — use return_value= instead."""
+    for n in ast.walk(node):
+        if isinstance(n, ast.Call) and "patch" in unparse(n.func):
+            for arg in n.args[1:]:  # skip first (target string)
+                if isinstance(arg, ast.Lambda):
+                    return True
+    return False
+
+
+def pytest_bad_import(tree: ast.AST) -> list[str]:
+    """from pytest import X — prefer import pytest and use pytest.X."""
+    bad = []
+    for n in ast.walk(tree):
+        if isinstance(n, ast.ImportFrom) and n.module == "pytest":
+            names = [a.name for a in n.names if a.name not in (
+                # these are legitimate to import directly
+                "fixture", "mark", "param", "raises", "warns",
+                "approx", "fail", "skip", "importorskip",
+                "MonkeyPatch", "LogCaptureFixture",
+            )]
+            bad.extend(names)
+    return bad
+
+
+def warns_no_type(node: ast.AST) -> bool:
+    """pytest.warns() called with no warning type."""
+    for n in ast.walk(node):
+        if isinstance(n, ast.With):
+            for item in n.items:
+                ce = item.context_expr
+                if (isinstance(ce, ast.Call)
+                        and "pytest.warns" in unparse(ce.func)
+                        and not ce.args
+                        and not ce.keywords):
+                    return True
+    return False
+
+
+def warns_too_broad(node: ast.AST) -> bool:
+    """pytest.warns(Warning) — too broad, use a specific warning type."""
+    for n in ast.walk(node):
+        if isinstance(n, ast.With):
+            for item in n.items:
+                ce = item.context_expr
+                if (isinstance(ce, ast.Call)
+                        and "pytest.warns" in unparse(ce.func)
+                        and ce.args
+                        and unparse(ce.args[0]) in ("Warning", "Exception")):
+                    return True
+    return False
+
+
+def warns_multi_statement(node: ast.AST) -> bool:
+    """pytest.warns block has multiple statements."""
+    for n in ast.walk(node):
+        if isinstance(n, ast.With):
+            for item in n.items:
+                if "pytest.warns" in unparse(item.context_expr):
+                    real_stmts = [s for s in n.body if not isinstance(s, ast.Pass)]
+                    if len(real_stmts) > 1:
+                        return True
+    return False
+
+
+def uses_assert_raises(node: ast.AST) -> bool:
+    """self.assertRaises used — prefer pytest.raises()."""
+    for n in ast.walk(node):
+        if isinstance(n, ast.Call):
+            fn = unparse(n.func)
+            if "assertRaises" in fn or "assertRaisesRegex" in fn:
+                return True
+    return False
+
+
+def test_has_default_args(node: ast.AST) -> list[str]:
+    """test function parameters with default values — fixtures can't have defaults."""
+    bad = []
+    for arg, default in zip(
+        reversed(node.args.args),
+        reversed(node.args.defaults),
+    ):
+        if arg.arg not in ("self", "cls"):
+            bad.append(f"{arg.arg}={unparse(default)}")
+    return bad
+
+
+def has_skip_and_xfail(node: ast.AST) -> bool:
+    """@skip and @xfail both on the same test — contradictory."""
+    marks = get_marks(node)
+    has_skip  = any(m in ("skip", "skipif") for m in marks)
+    has_xfail = "xfail" in marks
+    return has_skip and has_xfail
+
+
+def has_skipif_true(node: ast.AST) -> bool:
+    """@pytest.mark.skipif(True, reason=...) — use @pytest.mark.skip directly."""
+    for d in node.decorator_list:
+        src = unparse(d)
+        if (
+            "skipif" in src
+            and isinstance(d, ast.Call)
+            and d.args
+            and isinstance(d.args[0], ast.Constant)
+            and d.args[0].value is True
+        ):
+            return True
+    return False

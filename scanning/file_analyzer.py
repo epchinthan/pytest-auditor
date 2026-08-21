@@ -41,6 +41,7 @@ def analyse_file(
     report.issues += checks.check_credentials(source, path)
     report.issues += checks.check_unittest_mock_import(tree, path)
     report.issues += checks.check_module_level_mock(tree, path)
+    report.issues += checks.check_import_style(tree, path)
 
     # ── collect fixtures defined in this file ──────────────────────────────
     file_fixtures: dict[str, ast.AST] = {}
@@ -73,6 +74,7 @@ def analyse_file(
 
         report.issues += checks.check_fixture(node, path)
         report.issues += checks.check_fixture_shadow(name, conftest_fixtures, path, node.lineno)
+        report.issues += checks.check_fixture_style(node, path)
 
     # ── scope compatibility ────────────────────────────────────────────────
     all_scopes = {
@@ -110,6 +112,7 @@ def analyse_file(
                 if h.is_test_class(node):
                     report.class_count += 1
                     report.issues += checks.check_class(node, path)
+                    report.issues += checks.check_class_init(node, path)
                     report.issues += checks.check_registered_marks(
                         h.get_marks(node), registered_marks, path, node.lineno,
                         f"class '{node.name}'",
@@ -140,6 +143,12 @@ def analyse_file(
             issues = checks.check_test(
                 node, path, class_name, known_fixture_names, registered_marks, tree
             )
+            _pfx = f"[{class_name}] " if class_name else ""
+            issues += checks.check_assert_style(node, path, _pfx)
+            issues += checks.check_test_structure(node, path, _pfx)
+            issues += checks.check_warns_usage(node, path, _pfx)
+            issues += checks.check_unittest_style(node, path, _pfx)
+            issues += checks.check_mock_style(node, path, _pfx)
             report.tests.append({
                 "name":    node.name,
                 "line":    node.lineno,

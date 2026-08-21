@@ -4,7 +4,7 @@ A static quality audit tool for pytest test suites. Analyses every test file
 using Python's AST — no test execution needed. Produces a rich terminal report
 and a self-contained HTML report.
 
-**59 checks across 9 categories.** Single runtime dependency: `rich`.
+**97 checks across 9 categories.** Single runtime dependency: `rich`.
 Works as a standalone script, via `make`, or as a pytest plugin.
 
 ---
@@ -16,6 +16,7 @@ pytest-auditor/
   Makefile
   README.md
   __main__.py              ← CLI entry point + pytest plugin
+  analyse.py               ← public entry point (import scan from here)
 
   core/
     models.py              ← dataclasses and shared constants
@@ -73,8 +74,7 @@ python __main__.py --file path/to/test_orders.py --test test_create_order
 
 ## Usage — pytest plugin
 
-Copy the project folder next to your root `conftest.py` and add `HERE` to
-`sys.path`, then:
+Copy the project folder next to your root `conftest.py`, then:
 
 ```bash
 pytest --quality-report
@@ -96,9 +96,9 @@ Coverage below 80% deducts points from the quality score.
 
 ---
 
-## All 59 checks
+## All 97 checks
 
-### T — Test quality (24 checks)
+### T — Test quality (37 checks)
 
 | Code | Level   | Check |
 |------|---------|-------|
@@ -125,8 +125,31 @@ Coverage below 80% deducts points from the quality score.
 | T022 | Info    | asyncio.sleep(0) — usually unnecessary in tests |
 | T023 | Warning | asyncio.run() inside test — use async def + asyncio_mode='auto' |
 | T024 | Info    | Parametrize id with spaces/brackets — makes -k filtering awkward |
+| T025 | Warning | pytest.raises(Exception) too broad — use a specific exception type |
+| T026 | Warning | pytest.raises block has multiple statements — only first can raise |
+| T027 | Info    | pytest.warns() without match= — may accept unrelated warnings |
+| T028 | Warning | Duplicate parametrize case values — copy-paste error |
+| T029 | Warning | assert False literal — use pytest.fail('reason') instead |
+| T030 | Info    | pytest.fail() called without a message |
+| T031 | Warning | assert inside except block — use pytest.raises() instead |
+| T032 | Warning | Debugger call left in test (pdb, breakpoint, etc.) |
+| T033 | Warning | assert x == None — use assert x is None |
+| T034 | Warning | assert x == True/False — use assert x / assert not x |
+| T035 | Error   | Test class defines \_\_init\_\_ — breaks pytest collection |
+| T036 | Warning | \*args/\*\*kwargs in test signature — fixtures cannot be injected |
+| T037 | Error   | Parametrize argument name not present in test signature |
+| T038 | Warning | Duplicate parametrize argument names |
+| T039 | Error   | Parametrize row has wrong number of values |
+| T040 | Warning | assert a and b — split into separate asserts for clearer failures |
+| T041 | Warning | @skip and @xfail both applied — contradictory marks |
+| T042 | Info    | skipif(True, ...) — use @pytest.mark.skip directly |
+| T043 | Warning | Test parameter has default value — fixtures cannot have defaults |
+| T044 | Warning | pytest.warns() with no warning type specified |
+| T045 | Info    | pytest.warns(Warning) too broad — use a specific warning subclass |
+| T046 | Info    | Multiple statements in pytest.warns block |
+| T047 | Warning | self.assertRaises() used — prefer pytest.raises() |
 
-### FX — Fixtures (8 checks)
+### FX — Fixtures (17 checks)
 
 | Code | Level   | Check |
 |------|---------|-------|
@@ -138,8 +161,17 @@ Coverage below 80% deducts points from the quality score.
 | FX06 | Warning | Fixture yields more than once — only first yield is used |
 | FX07 | Info    | Fixture parameter shadows a Python builtin (id, type, list…) |
 | FX08 | Info    | Fixture name shadows a same-named fixture in a parent conftest.py |
+| FX09 | Info    | Fixture parameter has a default value — fixtures don't support defaults |
+| FX10 | Info    | Fixture yields with no teardown after yield — use return instead |
+| FX11 | Warning | Fixture defined more than once in the same file |
+| FX12 | Warning | Fixture requests another fixture with the same name — circular |
+| FX13 | Warning | Fixture scope passed as positional arg — use scope='module' |
+| FX14 | Info    | scope='function' is the default — remove redundant argument |
+| FX15 | Warning | @pytest.yield_fixture is deprecated — use @pytest.fixture with yield |
+| FX16 | Warning | request.addfinalizer() is old-style teardown — use yield instead |
+| FX17 | Info    | @pytest.mark.asyncio on a fixture is unnecessary |
 
-### MK — Mocking (7 checks)
+### MK — Mocking (8 checks)
 
 | Code | Level   | Check |
 |------|---------|-------|
@@ -150,8 +182,9 @@ Coverage below 80% deducts points from the quality score.
 | MK05 | Warning | MagicMock()/Mock() at module level — shared between all tests |
 | MK06 | Warning | Patch target has no module path — use 'myapp.module.name' |
 | MK07 | Info    | Same mock target patched twice in one test — likely copy-paste error |
+| MK08 | Info    | mocker.patch(target, lambda: value) — use return_value= instead |
 
-### N — Naming (7 checks)
+### N — Naming (8 checks)
 
 | Code | Level   | Check |
 |------|---------|-------|
@@ -162,6 +195,7 @@ Coverage below 80% deducts points from the quality score.
 | N005 | Info    | Test class with no test methods |
 | N006 | Warning | Vague test name (test_it, test_foo, test_run…) |
 | N007 | Info    | Test name ends with a number (test_login1) — use descriptive names |
+| N008 | Info    | from pytest import X — prefer import pytest and use pytest.X |
 
 ### OR — Organisation (4 checks)
 
@@ -181,18 +215,22 @@ Coverage below 80% deducts points from the quality score.
 | S003 | Info    | Test file with no tests or fixtures |
 | S004 | Info    | No tests have any marks — includes pytestmark module assignments |
 
-### SA — Safety (2 checks)
+### SA — Safety (4 checks)
 
 | Code | Level   | Check |
 |------|---------|-------|
 | SA01 | Warning | open(..., 'w') with a non-tmp path — use tmp_path |
 | SA02 | Warning | os.environ modified directly — use monkeypatch.setenv() |
+| SA03 | Warning | os.chdir() used — changes process-wide cwd; use monkeypatch.chdir() |
+| SA04 | Warning | sys.path modified directly — use monkeypatch.syspath_prepend() |
 
-### M — Marks (1 check)
+### M — Marks (3 checks)
 
 | Code | Level   | Check |
 |------|---------|-------|
 | M001 | Warning | Unregistered custom mark — add to markers in pyproject.toml |
+| M002 | Warning | @pytest.mark.usefixtures on a fixture has no effect |
+| M003 | Info    | @pytest.mark.usefixtures() with no arguments — remove it |
 
 ### F — File (3 checks)
 
@@ -226,7 +264,7 @@ build  dist  *.egg-info
 Starts at 100 and deducts:
 
 | Item | Deduction |
-|------|-----------| 
+|------|-----------|
 | Each error | 8 points |
 | Each warning | 3 points |
 | Each info | 1 point |
@@ -237,38 +275,22 @@ Starts at 100 and deducts:
 
 ---
 
-## HTML report features
-
-- Quality score ring with colour-coded grade
-- 10 stat cards — tests, files, fixtures, coverage, errors, warnings, info,
-  test debt %, isolation score, async count
-- Filterable issues table — search by text or filter by level
-- Files tab — per-file summary with issue counts
-- Tests tab — every test with assert count, line count, marks, flags
-- Fixtures tab — scope, body length, autouse/return flags
-- By directory tab — which subdirectory has the most errors
-- Fixture scope breakdown chart
-- Issues per file chart (top 10)
-- Configuration panel — registered marks, conftest.py locations
-- Full codes reference — all 59 checks
-
----
-
 ## Code structure
 
-| File | Lines | Responsibility |
-|------|-------|----------------|
-| `__main__.py` | 153 | CLI + pytest plugin, path resolution |
-| `core/models.py` | 110 | Dataclasses, constants, regex patterns |
-| `core/ast_helpers.py` | 482 | Pure AST queries — no side effects |
-| `core/checks.py` | 443 | Issue generators — take a node, return list[Issue] |
-| `reporting/config.py` | 90 | Read pyproject.toml, pytest.ini, coverage.json |
-| `reporting/terminal.py` | 174 | Rich terminal output |
-| `reporting/html_report.py` | 554 | Self-contained HTML report |
-| `scanning/file_analyzer.py` | 149 | Single file → FileReport |
-| `scanning/suite_scanner.py` | 184 | Directory → SuiteReport, metrics, score |
-| `scanning/targeted.py` | 223 | Single file or single test audit |
-| `scanning/scanner.py` | 32 | Re-exports public scan API |
+| File | Responsibility |
+|------|----------------|
+| `__main__.py` | CLI + pytest plugin, path resolution |
+| `analyse.py` | Public entry point — import scan functions from here |
+| `core/models.py` | Dataclasses, constants, regex patterns |
+| `core/ast_helpers.py` | Pure AST queries — no side effects |
+| `core/checks.py` | Issue generators — take a node, return list[Issue] |
+| `reporting/config.py` | Read pyproject.toml, pytest.ini, coverage.json |
+| `reporting/terminal.py` | Rich terminal output |
+| `reporting/html_report.py` | Self-contained HTML report |
+| `scanning/file_analyzer.py` | Single file → FileReport |
+| `scanning/suite_scanner.py` | Directory → SuiteReport, metrics, score |
+| `scanning/targeted.py` | Single file or single test audit |
+| `scanning/scanner.py` | Re-exports public scan API |
 
 ---
 

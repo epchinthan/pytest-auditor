@@ -468,8 +468,9 @@ def check_test(
 def check_registered_marks(
     marks: list[str], registered_marks: set[str], path: Path, lineno: int, owner: str,
 ) -> list[Issue]:
+    """Flag marks that are not registered in pyproject.toml / pytest.ini."""
     return [
-        Issue(WARNING, "M002" if owner.startswith("class ") else "M003",
+        Issue(WARNING, "M001",
               f"Unregistered mark '@pytest.mark.{mark}' on {owner}", str(path), lineno)
         for mark in marks
         if mark not in BUILTIN_MARKS and mark not in registered_marks
@@ -538,3 +539,184 @@ def check_duplicate_names(name_lines: dict[str, list[int]], path: Path) -> list[
                 f"Duplicate test name '{name}' at lines {lines} — silent collection conflict",
                 str(path), lines[0]))
     return issues
+
+# ── additional checks from flake8-pytest-style and pytest standards ────────────
+
+def check_assert_style(node: ast.AST, path: Path, pfx: str) -> list[Issue]:
+    """T033 / T034 / T040 — assertion style issues."""
+    issues = []
+    rel = str(path)
+    name = node.name
+
+    # T033: assert x == None
+    if h.assert_eq_none(node):
+        issues.append(Issue(WARNING, "T033",
+            f"{pfx}{name}: assert x == None — use assert x is None",
+            rel, node.lineno))
+
+    # T034: assert x == True / assert x == False
+    bools = h.assert_eq_bool(node)
+    if bools:
+        issues.append(Issue(WARNING, "T034",
+            f"{pfx}{name}: assert x == {bools[0]} — use assert x / assert not x",
+            rel, node.lineno))
+
+    # T040: assert a and b — split into separate asserts
+    if h.assert_compound_and(node):
+        issues.append(Issue(WARNING, "T040",
+            f"{pfx}{name}: assert with 'and' — split into separate asserts "
+            "for clearer failure messages",
+            rel, node.lineno))
+
+    return issues
+
+
+def check_test_structure(node: ast.AST, path: Path, pfx: str) -> list[Issue]:
+    """T035 / T036 / T041 / T042 — test function structure issues."""
+    issues = []
+    rel = str(path)
+    name = node.name
+
+    # T035: test *args / **kwargs — fixtures can't inject
+    if h.test_has_star_args(node):
+        issues.append(Issue(WARNING, "T036",
+            f"{pfx}{name}: *args/**kwargs in test signature — "
+            "pytest cannot inject fixtures into variadic arguments",
+            rel, node.lineno))
+
+    # T041: @skip + @xfail on same test — contradictory
+    if h.has_skip_and_xfail(node):
+        issues.append(Issue(WARNING, "T041",
+            f"{pfx}{name}: both @skip and @xfail applied — "
+            "contradictory marks; remove one",
+            rel, node.lineno))
+
+    # T042: skipif(True,...) — use @skip directly
+    if h.has_skipif_true(node):
+        issues.append(Issue(INFO, "T042",
+            f"{pfx}{name}: @pytest.mark.skipif(True, ...) — "
+            "condition is always True; use @pytest.mark.skip instead",
+            rel, node.lineno))
+
+    # PT028 / T043: test default argument values
+    defaults = h.test_has_default_args(node)
+    if defaults:
+        issues.append(Issue(WARNING, "T043",
+            f"{pfx}{name}: test parameter(s) have default values {defaults} — "
+            "pytest cannot inject fixtures with defaults",
+            rel, node.lineno))
+
+    return issues
+
+
+def check_warns_usage(node: ast.AST, path: Path, pfx: str) -> list[Issue]:
+    """T044 / T045 / T046 — pytest.warns() usage issues."""
+    issues = []
+    rel = str(path)
+    name = node.name
+
+    if h.warns_no_type(node):
+        issues.append(Issue(WARNING, "T044",
+            f"{pfx}{name}: pytest.warns() with no warning type — "
+            "specify the expected warning class",
+            rel, node.lineno))
+
+    if h.warns_too_broad(node):
+        issues.append(Issue(INFO, "T045",
+            f"{pfx}{name}: pytest.warns(Warning) too broad — "
+            "use a specific warning subclass",
+            rel, node.lineno))
+
+    if h.warns_multi_statement(node):
+        issues.append(Issue(INFO, "T046",
+            f"{pfx}{name}: multiple statements in pytest.warns block — "
+            "only the statement that triggers the warning should be inside",
+            rel, node.lineno))
+
+    return issues
+
+
+def check_unittest_style(node: ast.AST, path: Path, pfx: str) -> list[Issue]:
+    """T047 — self.assertRaises used instead of pytest.raises."""
+    issues = []
+    if h.uses_assert_raises(node):
+        issues.append(Issue(WARNING, "T047",
+            f"{pfx}{node.name}: self.assertRaises() used — "
+            "use pytest.raises() as a context manager instead",
+            str(path), node.lineno))
+    return issues
+
+
+def check_class_init(node: ast.ClassDef, path: Path) -> list[Issue]:
+    """T035 — Test class with __init__ breaks pytest collection."""
+    if h.class_has_init(node):
+        return [Issue(ERROR, "T035",
+            f"Class '{node.name}' defines __init__ — "
+            "pytest cannot collect tests from classes with __init__",
+            str(path), node.lineno)]
+    return []
+
+
+def check_fixture_style(node: ast.AST, path: Path) -> list[Issue]:
+    """FX13/FX14/FX15/FX16 — fixture decorator and style issues."""
+    issues = []
+    rel = str(path)
+    name = node.name
+
+    # FX13: positional scope arg
+    if h.fixture_scope_positional(node):
+        issues.append(Issue(WARNING, "FX13",
+            f"Fixture '{name}': scope passed as positional argument — "
+            "use @pytest.fixture(scope='module') not @pytest.fixture('module')",
+            rel, node.lineno))
+
+    # FX14: redundant scope='function'
+    if h.fixture_scope_redundant_function(node):
+        issues.append(Issue(INFO, "FX14",
+            f"Fixture '{name}': scope='function' is the default — "
+            "remove the redundant scope argument",
+            rel, node.lineno))
+
+    # FX15: @pytest.yield_fixture deprecated
+    if h.fixture_is_yield_fixture(node):
+        issues.append(Issue(WARNING, "FX15",
+            f"Fixture '{name}': @pytest.yield_fixture is deprecated — "
+            "use @pytest.fixture with yield instead",
+            rel, node.lineno))
+
+    # FX16: request.addfinalizer
+    if h.fixture_uses_addfinalizer(node):
+        issues.append(Issue(WARNING, "FX16",
+            f"Fixture '{name}': request.addfinalizer() is old-style teardown — "
+            "use yield for cleanup instead",
+            rel, node.lineno))
+
+    # FX17: asyncio mark on fixture
+    if h.fixture_asyncio_mark(node):
+        issues.append(Issue(INFO, "FX17",
+            f"Fixture '{name}': @pytest.mark.asyncio on a fixture is unnecessary — "
+            "the mark is only needed on async test functions",
+            rel, node.lineno))
+
+    return issues
+
+
+def check_mock_style(node: ast.AST, path: Path, pfx: str) -> list[Issue]:
+    """MK08 — mocker.patch with lambda instead of return_value=."""
+    if h.patch_uses_lambda(node):
+        return [Issue(INFO, "MK08",
+            f"{pfx}{node.name}: mocker.patch(target, lambda: value) — "
+            "use mocker.patch(target, return_value=value) instead",
+            str(path), node.lineno)]
+    return []
+
+
+def check_import_style(tree: ast.AST, path: Path) -> list[Issue]:
+    """N008 — from pytest import X — prefer import pytest."""
+    bad = h.pytest_bad_import(tree)
+    if bad:
+        return [Issue(INFO, "N008",
+            f"'from pytest import {', '.join(bad)}' — "
+            "prefer 'import pytest' and use pytest.raises(), pytest.mark etc.",
+            str(path))]
+    return []
