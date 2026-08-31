@@ -211,9 +211,16 @@ def check_test(
 
     # ── assertions ─────────────────────────────────────────────────────────
     if n_ass == 0 and not h.has_pytest_raises(node) and not h.has_non_assert_verification(node):
-        issues.append(Issue(ERROR, "T001",
-            f"{pfx}{name}: no assert statements — test proves nothing",
-            rel, node.lineno))
+        if h.calls_function_with_asserts(node, tree):
+            # test delegates assertions to a helper — legitimate pattern, but worth noting
+            issues.append(Issue(INFO, "T001",
+                f"{pfx}{name}: no direct assert statements — "
+                "assertions are delegated to a helper function",
+                rel, node.lineno))
+        else:
+            issues.append(Issue(ERROR, "T001",
+                f"{pfx}{name}: no assert statements — test proves nothing",
+                rel, node.lineno))
 
     elif n_ass > 5:
         issues.append(Issue(WARNING, "T002",

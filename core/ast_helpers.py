@@ -868,3 +868,43 @@ def has_skipif_true(node: ast.AST) -> bool:
         ):
             return True
     return False
+
+
+def calls_function_with_asserts(node: ast.AST, tree: ast.AST) -> bool:
+    """
+    True if the test calls any function defined in the same file
+    that itself contains assert statements.
+
+    Covers patterns like:
+        def check_response(resp):
+            assert resp.status == 200   # asserts are here
+
+        def test_get(client):
+            check_response(client.get("/"))   # no assert here, but delegates
+    """
+    # collect all functions in the file that contain asserts
+    helpers_with_asserts: set[str] = set()
+    for n in ast.walk(tree):
+        if (
+            isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and n is not node                          # not the test itself
+            and not n.name.startswith("test_")         # not another test
+            and any(isinstance(c, ast.Assert) for c in ast.walk(n))
+        ):
+            helpers_with_asserts.add(n.name)
+
+    if not helpers_with_asserts:
+        return False
+
+    # check if the test calls or references any of those helpers
+    return is_called_in_tree_any(helpers_with_asserts, node)
+
+
+def is_called_in_tree_any(names: set[str], node: ast.AST) -> bool:
+    """True if any name in `names` is referenced inside `node`."""
+    for n in ast.walk(node):
+        if isinstance(n, ast.Name) and n.id in names:
+            return True
+        if isinstance(n, ast.Attribute) and n.attr in names:
+            return True
+    return False
