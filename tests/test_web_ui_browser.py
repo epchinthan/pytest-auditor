@@ -23,7 +23,7 @@ def page_with_audit_results(page: Page, app_url, browser_test_suite):
 ], ids=['suite', 'file', 'single-test'])
 def test_run_audit_and_view_results(page: Page, app_url, browser_test_suite, mode, expected_count):
     page.goto(app_url)
-    page.get_by_label('Audit scope').select_option(mode)
+    expect(page.get_by_label('Audit scope')).to_have_count(0)
     target = browser_test_suite if mode == 'suite' else browser_test_suite / 'test_beta.py'
     page.locator('#path').fill(str(target))
     if mode == 'test':
@@ -50,7 +50,7 @@ def test_run_audit_and_view_results(page: Page, app_url, browser_test_suite, mod
 def test_issue_sorting_orders_every_row(page: Page, page_with_audit_results, key, direction, expected_codes):
     page.get_by_label('Sort by', exact=True).select_option(key)
     page.get_by_label('Order', exact=True).select_option(direction)
-    expect(page.locator('#table tbody tr td:nth-child(4)')).to_have_text(expected_codes)
+    expect(page.locator('#table tbody tr td:nth-child(5)')).to_have_text(expected_codes)
 
 
 # Changing one filter must not silently discard the other filter’s selection.
@@ -58,11 +58,11 @@ def test_search_and_severity_filters_work_together(page: Page, page_with_audit_r
     page.get_by_label('Severity', exact=True).select_option('warning')
     page.get_by_label('Search results').fill('T019')
     expect(page.locator('#table tbody tr')).to_have_count(1)
-    expect(page.locator('#table tbody tr td:nth-child(4)')).to_have_text(['T019'])
+    expect(page.locator('#table tbody tr td:nth-child(5)')).to_have_text(['T019'])
     page.get_by_label('Severity', exact=True).select_option('error')
     expect(page.get_by_text('No results for this view or filter.')).to_be_visible()
     page.get_by_label('Search results').fill('')
-    expect(page.locator('#table tbody tr td:nth-child(4)')).to_have_text(['T001'])
+    expect(page.locator('#table tbody tr td:nth-child(5)')).to_have_text(['T001'])
 
 
 def test_finding_explanation_can_be_opened(page: Page, page_with_audit_results):
@@ -89,7 +89,7 @@ def test_folder_picker_navigates_and_selects_sources(page: Page, app_url, browse
     target = browser_test_suite / 'test_beta.py' if selection == 'file' else browser_test_suite
     expect(page.get_by_role('dialog')).not_to_be_visible()
     expect(page.locator('#path')).to_have_value(str(target))
-    expect(page.get_by_label('Audit scope')).to_have_value(expected_mode)
+    expect(page.get_by_label('Audit scope')).to_have_count(0)
 
 
 def test_missing_local_path_explains_failure(page: Page, app_url, tmp_path):
@@ -169,9 +169,9 @@ def test_html_download_is_interactive_offline(page: Page, page_with_audit_result
     event.value.save_as(output)
     page.goto(output.as_uri())
     page.get_by_label('Sort by', exact=True).select_option('code')
-    expect(page.locator('#iss-tbl tbody tr td:nth-child(3)')).to_have_text(['T001', 'T012', 'T019'])
+    expect(page.locator('#iss-tbl tbody tr td:nth-child(4)')).to_have_text(['T001', 'T012', 'T019'])
     page.get_by_label('Order', exact=True).select_option('desc')
-    expect(page.locator('#iss-tbl tbody tr td:nth-child(3)')).to_have_text(['T019', 'T012', 'T001'])
+    expect(page.locator('#iss-tbl tbody tr td:nth-child(4)')).to_have_text(['T019', 'T012', 'T001'])
 
 
 # Users can run an audit without choosing a threshold; errors explain the score cap.
@@ -189,3 +189,47 @@ def test_minimum_score_is_not_requested_and_error_cap_is_explained(page: Page, a
     expect(page.locator('#score-note')).to_contain_text('cannot exceed 70/100')
     page.get_by_role('tab', name='Configuration', exact=True).click()
     expect(page.locator('#table')).not_to_contain_text('Score threshold')
+
+
+@pytest.mark.parametrize('folder', [False, True])
+def test_upload_from_laptop(page: Page, app_url, browser_test_suite, folder):
+    page.goto(app_url)
+    page.get_by_label('Source', exact=True).select_option('upload')
+    expect(page.locator('#path-fields')).not_to_be_visible()
+    expect(page.get_by_label('Audit scope')).to_have_count(0)
+    if folder:
+        page.get_by_label('Upload type').select_option('folder')
+        page.locator('#upload-source').set_input_files(str(browser_test_suite))
+    else:
+        page.locator('#upload-source').set_input_files(str(browser_test_suite / 'test_beta.py'))
+    page.get_by_role('button', name='Run audit').click()
+    expect(page.locator('#status')).to_contain_text('Audit complete.')
+    expect(page.locator('#metrics .metric').nth(1).locator('.value')).to_have_text('2' if folder else '1')
+    expect(page.locator('#table')).to_contain_text('test_beta.py')
+
+
+def test_related_rules_group_under_readable_categories(page: Page, page_with_audit_results):
+    expect(page.get_by_label('Sort by', exact=True)).to_have_value('category')
+    expect(page.locator('#table tbody tr td:nth-child(4)')).to_have_text([
+        'Assertions & verification', 'Assertions & verification', 'Debugging & maintainability'])
+    expect(page.locator('#table tbody tr td:nth-child(5)')).to_have_text(['T001','T019','T012'])
+    page.get_by_label('Search results').fill('Assertions & verification')
+    expect(page.locator('#table tbody tr')).to_have_count(2)
+    page.get_by_label('Search results').fill('')
+    page.get_by_label('Order', exact=True).select_option('desc')
+    expect(page.locator('#table tbody tr td:nth-child(4)').first).to_have_text('Debugging & maintainability')
+
+
+def test_single_picker_resets_selection_when_switching_type(page: Page, app_url, browser_test_suite):
+    page.goto(app_url)
+    page.get_by_label('Source', exact=True).select_option('upload')
+    expect(page.locator('#upload-fields input[type=file]')).to_have_count(1)
+    page.locator('#upload-source').set_input_files(str(browser_test_suite / 'test_beta.py'))
+    expect(page.locator('#upload-selection')).to_contain_text('1 source/configuration files selected')
+    page.get_by_label('Upload type').select_option('folder')
+    expect(page.locator('#upload-source')).to_have_attribute('webkitdirectory', '')
+    page.get_by_label('Upload type').select_option('file')
+    expect(page.locator('#upload-source')).not_to_have_attribute('webkitdirectory', '')
+    expect(page.locator('#upload-source')).to_have_value('')
+    page.get_by_role('button', name='Run audit').click()
+    expect(page.locator('#status')).to_contain_text('Choose a Python file or a folder')

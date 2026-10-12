@@ -22,7 +22,7 @@ log = pathlib.Path(os.environ['FAKE_AZ_LOG'])
 with log.open('a') as output:
     output.write(json.dumps(['az', *args]) + '\\n')
 logged_in = log.with_suffix('.login')
-if args[:2] == ['account', 'show'] and os.environ.get('FAKE_LOGIN_ABSENT') == '1' and not logged_in.exists():
+if args[:2] in [['account', 'show'], ['account', 'get-access-token']] and os.environ.get('FAKE_LOGIN_ABSENT') == '1' and not logged_in.exists():
     sys.exit(1)
 if args[:1] == ['login']:
     logged_in.touch()
@@ -39,8 +39,10 @@ if args[:2] == ['account', 'list']:
         print('sub-one\\tFirst subscription\\tFalse')
         print('sub-two\\tSecond subscription\\tFalse')
 if args[:2] == ['account', 'show'] and '--query' in args:
-    print('Example subscription')
+    print('sub-one\\tExample subscription')
 if args[:2] == ['group', 'show']:
+    if os.environ.get('FAKE_GROUP_MISSING') == '1':
+        sys.exit(1)
     print(os.environ.get('FAKE_EXISTING_LOCATION', 'westeurope'))
 if args[:2] == ['webapp', 'deploy']:
     from zipfile import ZipFile
@@ -100,22 +102,36 @@ def run_launcher(env, tmp_path):
 
 
 # Assert actual arguments and uploaded files, not just a printed success message.
-def test_source_deployment_runtime_startup_and_https(azure_commands, tmp_path):
+@pytest.fixture
+def deployed_sources(azure_commands, tmp_path):
     env, log = azure_commands
     result = run_launcher(env, tmp_path)
-    assert result.returncode == 0, result.stderr
+    if result.returncode:
+        pytest.fail(result.stderr)
     calls = [json.loads(line) for line in log.read_text().splitlines()]
+    return calls, json.loads(log.with_suffix('.context').read_text())
+
+
+def test_source_deployment_runtime_and_startup(deployed_sources):
+    calls, _ = deployed_sources
     deploy = next(call for call in calls if call[:3] == ['az', 'webapp', 'deploy'])
-    assert deploy[deploy.index('--type') + 1] == 'zip'
     config = next(call for call in calls if call[:4] == ['az', 'webapp', 'config', 'set'])
+    settings = next(call for call in calls if call[:5] == ['az', 'webapp', 'config', 'appsettings', 'set'])
+    assert deploy[deploy.index('--type') + 1] == 'zip'
     assert config[config.index('--linux-fx-version') + 1] == 'PYTHON|3.12'
     assert config[config.index('--startup-file') + 1] == 'python web_server.py --host 0.0.0.0 --port 8000'
-    settings = next(call for call in calls if call[:5] == ['az', 'webapp', 'config', 'appsettings', 'set'])
     assert 'SCM_DO_BUILD_DURING_DEPLOYMENT=true' in settings
     assert calls.index(settings) < calls.index(deploy)
+
+
+def test_source_deployment_requires_no_docker_and_opens_https(deployed_sources):
+    calls, _ = deployed_sources
     assert not any(call[0] == 'docker' or 'acr' in call or 'AcrPull' in call for call in calls)
     assert ['xdg-open', 'https://pytest-auditor.example.azurewebsites.net'] in calls
-    context = json.loads(log.with_suffix('.context').read_text())
+
+
+def test_source_package_includes_assets_and_excludes_host_files(deployed_sources):
+    _, context = deployed_sources
     assert 'web/index.html' in context['files']
     assert 'requirements.txt' in context['files']
     assert not any(path.startswith(('tests/', '.git/', '.azure-cli/', '.aws/', '.venv/'))
@@ -199,11 +215,12 @@ def test_subscription_problems_stop_before_resource_creation(azure_commands, tmp
 
 def test_existing_resource_group_region_is_discovered(azure_commands, tmp_path):
     env, log = azure_commands
-    result = run_launcher({**env, 'FAKE_EXISTING_LOCATION': 'northeurope'}, tmp_path)
+    result = run_launcher({**env, 'FAKE_EXISTING_LOCATION': 'northeurope', 'FAKE_RESOURCES_MISSING': '1'}, tmp_path)
     assert result.returncode == 0, result.stderr
     calls = [json.loads(line) for line in log.read_text().splitlines()]
-    deployment = next(call for call in calls if call[:3] == ['az', 'group', 'create'])
-    assert deployment[deployment.index('--location') + 1] == 'northeurope'
+    assert not any(call[:3] == ['az', 'group', 'create'] for call in calls)
+    plan = next(call for call in calls if call[:4] == ['az', 'appservice', 'plan', 'create'])
+    assert plan[plan.index('--location') + 1] == 'northeurope'
 
 
 # The pip-installed az wrapper can require a global 'python' that does not exist.
@@ -258,10 +275,6 @@ def test_app_service_resource_creation_and_reuse(azure_commands, tmp_path, missi
     calls = [json.loads(line) for line in log.read_text().splitlines()]
     assert any(call[:4] == ['az', 'appservice', 'plan', 'create'] for call in calls) == missing
     assert any(call[:3] == ['az', 'webapp', 'create'] for call in calls) == missing
-    if missing:
-        plan = next(call for call in calls if call[:4] == ['az', 'appservice', 'plan', 'create'])
-        assert '--is-linux' in plan
-        assert plan[plan.index('--sku') + 1] == 'B1'
     assert not any('AcrPull' in call for call in calls)
     assert not any('Microsoft.App' in call or 'containerapp' in call for call in calls)
 
@@ -313,3 +326,51 @@ def test_region_fallback_preserves_settings_and_other_errors(azure_commands, tmp
 
 
 
+
+
+def test_missing_group_is_created(azure_commands, tmp_path):
+    env, log = azure_commands
+    result = run_launcher({**env, 'FAKE_GROUP_MISSING': '1'}, tmp_path)
+    assert result.returncode == 0, result.stderr
+    calls = [json.loads(line) for line in log.read_text().splitlines()]
+    assert any(call[:3] == ['az', 'group', 'create'] for call in calls)
+
+
+@pytest.fixture(params=[False, True], ids=['existing-app', 'missing-app'])
+def source_only_run(azure_commands, tmp_path, request):
+    env, log = azure_commands
+    missing = request.param
+    result = subprocess.run([str(LAUNCHER), '--deploy-only'], cwd=tmp_path,
+                            env={**env, 'FAKE_RESOURCES_MISSING': '1' if missing else '0'},
+                            capture_output=True, text=True, timeout=20)
+    return missing, result, [json.loads(line) for line in log.read_text().splitlines()]
+
+
+def test_deploy_only_skips_resource_setup_and_extra_restart(source_only_run):
+    _, _, calls = source_only_run
+    assert not any(call[1:3] in [['provider', 'show'], ['group', 'create'], ['group', 'show']]
+                   or call[1:3] == ['appservice', 'plan']
+                   or call[1:3] == ['webapp', 'config'] for call in calls)
+    assert not any(call[:3] == ['az', 'webapp', 'restart'] for call in calls)
+
+
+def test_deploy_only_requires_existing_app_and_restarts_on_upload(source_only_run):
+    missing, result, calls = source_only_run
+    if missing:
+        assert result.returncode != 0
+        assert 'existing configured app' in result.stderr
+        assert not any(call[:3] == ['az', 'webapp', 'deploy'] for call in calls)
+    else:
+        assert result.returncode == 0, result.stderr
+        deploy = next(call for call in calls if call[:3] == ['az', 'webapp', 'deploy'])
+        assert deploy[deploy.index('--restart') + 1] == 'true'
+
+
+def test_new_app_service_plan_has_linux_and_expected_tier(azure_commands, tmp_path):
+    env, log = azure_commands
+    result = run_launcher({**env, 'FAKE_RESOURCES_MISSING': '1'}, tmp_path)
+    assert result.returncode == 0, result.stderr
+    calls = [json.loads(line) for line in log.read_text().splitlines()]
+    plan = next(call for call in calls if call[:4] == ['az', 'appservice', 'plan', 'create'])
+    assert '--is-linux' in plan
+    assert plan[plan.index('--sku') + 1] == 'B1'

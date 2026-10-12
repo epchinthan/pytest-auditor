@@ -5,11 +5,13 @@ set -euo pipefail
 PROJECT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 if [[ "${1:-}" == '--help' || "${1:-}" == '-h' ]]; then
     cat <<'HELP'
-Usage: ./runazure.sh
+Usage: ./runazure.sh [--deploy-only]
 
 Installs Azure CLI locally if needed, opens browser sign-in when necessary, deploys Python
 source to App Service, waits for HTTPS, and opens the URL. No Docker is required.
 Azure resources incur subscription charges.
+
+  --deploy-only  Upload to an existing configured app; skip resource/config setup.
 
 Optional environment variables:
   AZURE_SUBSCRIPTION        Optional override; otherwise discovered after login.
@@ -27,66 +29,69 @@ The launcher discovers your enabled subscriptions and uses the Azure default
 or the only available subscription. Multiple subscriptions without a default
 require one selection. Subsequent runs reuse your login. Fully unattended
 runs require an existing authenticated session or a configured managed identity.
-Local folders are not uploaded; use GitHub sources in the hosted web UI.
+Use Upload from laptop or GitHub sources in the hosted web UI.
 HELP
     exit 0
 fi
-[[ $# -eq 0 ]] || { printf 'Usage: ./runazure.sh\n' >&2; exit 2; }
+DEPLOY_ONLY=false
+if [[ "${1:-}" == '--deploy-only' ]]; then
+    DEPLOY_ONLY=true
+    shift
+fi
+[[ $# -eq 0 ]] || { printf 'Usage: ./runazure.sh [--deploy-only]\n' >&2; exit 2; }
 fail() { printf 'Error: %s\n' "$*" >&2; exit 1; }
 command -v curl >/dev/null 2>&1 || fail 'curl is required for the deployment readiness check.'
 command -v python3 >/dev/null 2>&1 || fail 'python3 is required to package the source deployment.'
 export UV_CACHE_DIR="${UV_CACHE_DIR:-$PROJECT_DIR/.cache/uv}"
 export PIP_CACHE_DIR="${PIP_CACHE_DIR:-$PROJECT_DIR/.cache/pip}"
 
-# Install tooling in its own environment, without changing system packages.
+# Keep Azure tooling isolated from the application's local runtime.
 CLI_DIR="$PROJECT_DIR/.azure-cli"
+install_azure_cli() {
+    if command -v uv >/dev/null 2>&1; then
+        # Azure CLI SDK dependencies include prereleases.
+        uv pip install --python "$CLI_DIR/bin/python" --upgrade --prerelease=allow 'azure-cli>=2.61'
+    else
+        "$CLI_DIR/bin/python" -m ensurepip --upgrade
+        "$CLI_DIR/bin/python" -m pip install --upgrade 'azure-cli>=2.61'
+    fi
+}
 if command -v az >/dev/null 2>&1; then
     AZ=(az)
     if [[ "$(command -v az)" == "$CLI_DIR/bin/az" ]]; then
         AZ=("$CLI_DIR/bin/python" -m azure.cli)
     fi
-elif [[ -x "$PROJECT_DIR/.azure-cli/bin/az" ]]; then
-    [[ -x "$CLI_DIR/bin/python" ]] || fail 'The local Azure CLI Python environment is incomplete; recreate .azure-cli.'
+elif [[ -x "$CLI_DIR/bin/python" ]]; then
     AZ=("$CLI_DIR/bin/python" -m azure.cli)
 else
+    [[ ! -e "$CLI_DIR" ]] || fail 'The local Azure CLI environment is incomplete; recreate .azure-cli.'
     printf 'Preparing Azure CLI…\n'
-    "$PROJECT_DIR/run.sh" --check
     if command -v uv >/dev/null 2>&1; then
-        uv venv --python "$PROJECT_DIR/.venv/bin/python" "$CLI_DIR"
-        uv pip install --python "$CLI_DIR/bin/python" --upgrade --prerelease=allow 'azure-cli>=2.61'
+        uv venv --python python3 "$CLI_DIR"
     else
-        "$PROJECT_DIR/.venv/bin/python" -m venv "$CLI_DIR"
-        "$CLI_DIR/bin/python" -m pip install --upgrade 'azure-cli>=2.61'
+        python3 -m venv "$CLI_DIR"
     fi
     AZ=("$CLI_DIR/bin/python" -m azure.cli)
 fi
 
-# uv otherwise rejects the beta SDK dependencies required by current Azure CLI
-# releases and can silently resolve an ancient CLI. Repair that environment too.
+# Run the local CLI module with its interpreter; its shell wrapper may require
+# a global "python" command. Repair missing or outdated CLI installations.
 if [[ "${AZ[0]}" == "$CLI_DIR/bin/python" ]]; then
+    [[ -x "$CLI_DIR/bin/python" ]] || fail 'The local Azure CLI environment is incomplete; recreate .azure-cli.'
     if ! "$CLI_DIR/bin/python" -c 'from importlib.metadata import version; import sys; sys.exit(0 if tuple(map(int, version("azure-cli").split(".")[:2])) >= (2, 61) else 1)' 2>/dev/null; then
-        printf 'Upgrading the local Azure CLI to a supported version…\n'
-        if command -v uv >/dev/null 2>&1; then
-            uv pip install --python "$CLI_DIR/bin/python" --upgrade --prerelease=allow 'azure-cli>=2.61'
-        else
-            "$CLI_DIR/bin/python" -m ensurepip --upgrade
-            "$CLI_DIR/bin/python" -m pip install --upgrade 'azure-cli>=2.61'
-        fi
+        printf 'Installing a supported Azure CLI…\n'
+        install_azure_cli
     fi
-    "${AZ[@]}" --version >/dev/null || fail 'The local Azure CLI could not start.'
 fi
 
-# The pip-installed az shell wrapper invokes an unqualified "python" command.
-# Run its module with the venv interpreter so no global python alias is needed.
-if ! "${AZ[@]}" account show --output none 2>/dev/null ||
-   ! "${AZ[@]}" account get-access-token --output none 2>/dev/null; then
+# Token validation also detects missing login; no separate account probe needed.
+if ! "${AZ[@]}" account get-access-token --output none 2>/dev/null; then
     if [[ "${AZURE_MANAGED_IDENTITY:-0}" == 1 ]]; then
         "${AZ[@]}" login --identity --output none
     elif [[ "${AZURE_NONINTERACTIVE:-0}" == 1 ]]; then
         fail 'No Azure login found. Authenticate with az login before an unattended deployment.'
     else
         printf 'Opening Azure sign-in in your browser. Complete login/MFA there; deployment will continue automatically.\n'
-        # Disable the CLI subscription prompt for this command only; discover it below.
         AZURE_CORE_LOGIN_EXPERIENCE_V2=off "${AZ[@]}" login --output none
     fi
 fi
@@ -132,62 +137,67 @@ else
     fi
     "${AZ[@]}" account set --subscription "$SELECTED_SUBSCRIPTION"
 fi
-SUBSCRIPTION_NAME="$("${AZ[@]}" account show --query name --output tsv)"
+IFS=$'\t' read -r SUBSCRIPTION_ID SUBSCRIPTION_NAME < <(
+    "${AZ[@]}" account show --query '[[id, name]]' --output tsv)
+[[ -n "$SUBSCRIPTION_ID" && -n "$SUBSCRIPTION_NAME" ]] || fail 'Azure did not return subscription details.'
 printf 'Using Azure subscription: %s\n' "$SUBSCRIPTION_NAME"
 
 RESOURCE_GROUP="${AZURE_RESOURCE_GROUP:-pytest-auditor-rg}"
 LOCATION="${AZURE_LOCATION:-westeurope}"
-SUBSCRIPTION_ID="$("${AZ[@]}" account show --query id --output tsv)"
 NAME_SUFFIX="$(printf '%s' "$SUBSCRIPTION_ID:$RESOURCE_GROUP" | cksum | awk '{print $1}')"
 APP_NAME="${AZURE_APP_NAME:-pytest-auditor-$NAME_SUFFIX}"
 PLAN_NAME="${AZURE_APP_SERVICE_PLAN:-pytest-auditor-plan}"
 PLAN_SKU="${AZURE_APP_SERVICE_SKU:-B1}"
-# Reuse an existing deployment's region instead of asking for location details.
-if [[ -z "${AZURE_LOCATION:-}" ]]; then
+if ! "$DEPLOY_ONLY"; then
+    # Reuse an existing deployment's region instead of asking for location details.
+    GROUP_EXISTS=false
     if existing_location="$("${AZ[@]}" group show --name "$RESOURCE_GROUP" --query location --output tsv 2>/dev/null)"; then
-        if [[ -n "$existing_location" && "$existing_location" != null ]]; then
+        GROUP_EXISTS=true
+        if [[ -z "${AZURE_LOCATION:-}" && -n "$existing_location" && "$existing_location" != null ]]; then
             LOCATION="$existing_location"
         fi
     fi
-fi
 
-# Retry regional admission/quota failures, preserving explicit location choices.
-create_in_eligible_region() {
-    local region output attempted=" "
-    local regions=("$LOCATION")
-    if [[ -z "${AZURE_LOCATION:-}" ]]; then
-        regions+=(northeurope francecentral germanywestcentral swedencentral)
-    fi
-    for region in "${regions[@]}"; do
-        [[ "$attempted" != *" $region "* ]] || continue
-        attempted+="$region "
-        printf 'Trying %s in %s…\n' "$1" "$region"
-        if output="$("${AZ[@]}" "$@" --location "$region" 2>&1)"; then
-            [[ -z "$output" ]] || printf '%s\n' "$output"
-            LOCATION="$region"
-            return 0
+    # Retry regional admission/quota failures, preserving explicit location choices.
+    create_in_eligible_region() {
+        local region output attempted=" "
+        local regions=("$LOCATION")
+        if [[ -z "${AZURE_LOCATION:-}" ]]; then
+            regions+=(northeurope francecentral germanywestcentral swedencentral)
         fi
-        case "$output" in
-            *locationineligible*|*'selected region is currently not accepting new customers'*)
-                printf 'Azure rejected region %s; checking the next region.\n' "$region" ;;
-            *'Operation cannot be completed without additional quota'*)
-                if [[ -n "${AZURE_LOCATION:-}" ]]; then
-                    printf '%s\n' "$output" >&2
-                    return 1
-                fi
-                printf 'Azure has insufficient %s quota in %s; checking the next region.\n' "$PLAN_SKU" "$region" ;;
-            *) printf '%s\n' "$output" >&2; return 1 ;;
-        esac
-    done
-    fail 'No region with available App Service quota was found. Request quota in Azure or choose a subscription-supported AZURE_LOCATION.'
-}
+        for region in "${regions[@]}"; do
+            [[ "$attempted" != *" $region "* ]] || continue
+            attempted+="$region "
+            printf 'Trying %s in %s…\n' "$1" "$region"
+            if output="$("${AZ[@]}" "$@" --location "$region" 2>&1)"; then
+                [[ -z "$output" ]] || printf '%s\n' "$output"
+                LOCATION="$region"
+                return 0
+            fi
+            case "$output" in
+                *locationineligible*|*'selected region is currently not accepting new customers'*)
+                    printf 'Azure rejected region %s; checking the next region.\n' "$region" ;;
+                *'Operation cannot be completed without additional quota'*)
+                    if [[ -n "${AZURE_LOCATION:-}" ]]; then
+                        printf '%s\n' "$output" >&2
+                        return 1
+                    fi
+                    printf 'Azure has insufficient %s quota in %s; checking the next region.\n' "$PLAN_SKU" "$region" ;;
+                *) printf '%s\n' "$output" >&2; return 1 ;;
+            esac
+        done
+        fail 'No region with available App Service quota was found. Request quota in Azure or choose a subscription-supported AZURE_LOCATION.'
+    }
 
-printf 'Checking App Service provider…\n'
-state="$("${AZ[@]}" provider show --namespace Microsoft.Web --query registrationState --output tsv)"
-if [[ "$state" != Registered ]]; then
-    "${AZ[@]}" provider register --namespace Microsoft.Web --wait --output none
+    printf 'Checking App Service provider…\n'
+    state="$("${AZ[@]}" provider show --namespace Microsoft.Web --query registrationState --output tsv)"
+    if [[ "$state" != Registered ]]; then
+        "${AZ[@]}" provider register --namespace Microsoft.Web --wait --output none
+    fi
+    if ! "$GROUP_EXISTS"; then
+        "${AZ[@]}" group create --name "$RESOURCE_GROUP" --location "$LOCATION" --output none
+    fi
 fi
-"${AZ[@]}" group create --name "$RESOURCE_GROUP" --location "$LOCATION" --output none
 
 # Package an allowlist of sources, never tooling, credentials, or local projects.
 BUILD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/pytest-auditor-azure.XXXXXX")"
@@ -209,40 +219,49 @@ with ZipFile(sys.argv[2], 'w', ZIP_DEFLATED) as archive:
         archive.write(path, path.relative_to(root))
 PACKAGE_PY
 
-printf 'Preparing Linux App Service plan %s (%s)…\n' "$PLAN_NAME" "$PLAN_SKU"
-if ! "${AZ[@]}" appservice plan show --name "$PLAN_NAME" --resource-group "$RESOURCE_GROUP" --output none 2>/dev/null; then
-    create_in_eligible_region appservice plan create --name "$PLAN_NAME" --resource-group "$RESOURCE_GROUP" \
-        --is-linux --sku "$PLAN_SKU" --number-of-workers 1 --output none
+if ! "$DEPLOY_ONLY"; then
+    printf 'Preparing Linux App Service plan %s (creation tier: %s)…\n' "$PLAN_NAME" "$PLAN_SKU"
+    if ! "${AZ[@]}" appservice plan show --name "$PLAN_NAME" --resource-group "$RESOURCE_GROUP" --output none 2>/dev/null; then
+        create_in_eligible_region appservice plan create --name "$PLAN_NAME" --resource-group "$RESOURCE_GROUP" \
+            --is-linux --sku "$PLAN_SKU" --number-of-workers 1 --output none
+    fi
+    # Always On requires a paid tier. Read the actual plan SKU on reruns because
+    # an existing plan can differ from the requested creation tier.
+    ACTUAL_PLAN_SKU="$("${AZ[@]}" appservice plan show --name "$PLAN_NAME" --resource-group "$RESOURCE_GROUP" --query sku.name --output tsv)"
+    printf 'Using App Service plan %s (%s).\n' "$PLAN_NAME" "$ACTUAL_PLAN_SKU"
+    ALWAYS_ON=true
+    case "${ACTUAL_PLAN_SKU^^}" in F1|D1) ALWAYS_ON=false ;; esac
+    if ! "${AZ[@]}" webapp show --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" --output none 2>/dev/null; then
+        "${AZ[@]}" webapp create --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
+            --plan "$PLAN_NAME" --runtime "PYTHON:3.12" --output none
+    fi
+    printf 'Configuring Python runtime, startup command, and HTTPS…\n'
+    # Setting linuxFxVersion also migrates an existing container app to managed Python.
+    "${AZ[@]}" webapp config set --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
+        --linux-fx-version 'PYTHON|3.12' \
+        --startup-file 'python web_server.py --host 0.0.0.0 --port 8000' \
+        --always-on "$ALWAYS_ON" --output none
+    # Remove incompatible settings left by previous container/package deployments.
+    "${AZ[@]}" webapp config appsettings delete --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
+        --setting-names WEBSITES_PORT WEBSITES_CONTAINER_START_TIME_LIMIT WEBSITES_RUN_FROM_PACKAGE \
+        DOCKER_CUSTOM_IMAGE_NAME DOCKER_REGISTRY_SERVER_URL DOCKER_REGISTRY_SERVER_USERNAME DOCKER_REGISTRY_SERVER_PASSWORD --output none
+    "${AZ[@]}" webapp config appsettings set --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
+        --settings SCM_DO_BUILD_DURING_DEPLOYMENT=true ENABLE_ORYX_BUILD=true --output none
+    "${AZ[@]}" webapp update --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" --https-only true --output none
+    # Azure uses this logging option for managed Linux runtimes too.
+    "${AZ[@]}" webapp log config --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
+        --docker-container-logging filesystem --output none
+else
+    # Do not silently create a new app when the user requested a source-only update.
+    "${AZ[@]}" webapp show --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" --output none ||
+        fail 'Deploy-only requires an existing configured app. Run ./runazure.sh first.'
+    printf 'Updating source only; keeping existing Azure configuration.\n'
 fi
-# Always On requires a paid tier. Read the actual plan SKU on reruns because
-# an existing plan can differ from the requested creation tier.
-ACTUAL_PLAN_SKU="$("${AZ[@]}" appservice plan show --name "$PLAN_NAME" --resource-group "$RESOURCE_GROUP" --query sku.name --output tsv)"
-ALWAYS_ON=true
-case "${ACTUAL_PLAN_SKU^^}" in F1|D1) ALWAYS_ON=false ;; esac
-if ! "${AZ[@]}" webapp show --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" --output none 2>/dev/null; then
-    "${AZ[@]}" webapp create --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
-        --plan "$PLAN_NAME" --runtime "PYTHON:3.12" --output none
-fi
-printf 'Configuring Python runtime, startup command, and HTTPS…\n'
-# Setting linuxFxVersion also migrates an existing container app to managed Python.
-"${AZ[@]}" webapp config set --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
-    --linux-fx-version 'PYTHON|3.12' \
-    --startup-file 'python web_server.py --host 0.0.0.0 --port 8000' \
-    --always-on "$ALWAYS_ON" --output none
-"${AZ[@]}" webapp config appsettings delete --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
-    --setting-names WEBSITES_PORT WEBSITES_CONTAINER_START_TIME_LIMIT WEBSITES_RUN_FROM_PACKAGE \
-    DOCKER_CUSTOM_IMAGE_NAME DOCKER_REGISTRY_SERVER_URL DOCKER_REGISTRY_SERVER_USERNAME DOCKER_REGISTRY_SERVER_PASSWORD --output none
-"${AZ[@]}" webapp config appsettings set --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
-    --settings SCM_DO_BUILD_DURING_DEPLOYMENT=true ENABLE_ORYX_BUILD=true --output none
-"${AZ[@]}" webapp update --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" --https-only true --output none
-"${AZ[@]}" webapp log config --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
-    --docker-container-logging filesystem --output none
 printf 'Uploading source ZIP and installing dependencies in Azure…\n'
 if ! "${AZ[@]}" webapp deploy --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
-    --src-path "$PACKAGE" --type zip --enable-kudu-warmup false --timeout 1800000 --output none; then
+    --src-path "$PACKAGE" --type zip --restart true --enable-kudu-warmup false --timeout 1800000 --output none; then
     fail "Source deployment failed. Inspect: az webapp log deployment show --name $APP_NAME --resource-group $RESOURCE_GROUP"
 fi
-"${AZ[@]}" webapp restart --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" --output none
 FQDN="$("${AZ[@]}" webapp show --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
     --query defaultHostName --output tsv)"
 [[ -n "$FQDN" && "$FQDN" != null ]] || fail 'Azure did not return an application hostname.'

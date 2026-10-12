@@ -7,6 +7,7 @@ from __future__ import annotations
 from pathlib import Path
 from html import escape
 
+from core.categories import category_for
 from core.models import SuiteReport
 from reporting.paths import display_path
 
@@ -51,9 +52,10 @@ def generate_html(report: SuiteReport, out_path: Path, folder_name: str | None =
             rel = display_path(i.file, report.root, folder_name)
             loc = f":{i.line}" if i.line else ""
             issue_rows.append(
-                f'<tr data-file="{escape(rel, quote=True)}" data-level="{escape(i.level, quote=True)}" data-code="{escape(i.code, quote=True)}" data-line="{i.line}">'
+                f'<tr data-file="{escape(rel, quote=True)}" data-level="{escape(i.level, quote=True)}" data-category="{escape(i.category, quote=True)}" data-code="{escape(i.code, quote=True)}" data-line="{i.line}">'
                 f'<td><code style="font-size:12px">{escape(rel)}{loc}</code></td>'
                 f'<td>{_badge(i.level)}</td>'
+                f'<td>{escape(i.category)}</td>'
                 f'<td><code style="font-size:11px;color:#6b7280">{i.code}</code></td>'
                 f'<td style="font-size:13px">{escape(i.message)}'
                 f'<details><summary>Why this matters · How to fix</summary>'
@@ -61,7 +63,7 @@ def generate_html(report: SuiteReport, out_path: Path, folder_name: str | None =
                 f'</tr>'
             )
     issues_html = "\n".join(issue_rows) or (
-        '<tr><td colspan="4" style="text-align:center;color:#16a34a;padding:20px">✔ No issues</td></tr>'
+        '<tr><td colspan="5" style="text-align:center;color:#16a34a;padding:20px">✔ No issues</td></tr>'
     )
 
     # ── file rows ─────────────────────────────────────────────────────────
@@ -313,10 +315,10 @@ def generate_html(report: SuiteReport, out_path: Path, folder_name: str | None =
 
     level_colors = {"error":"#dc2626","warning":"#d97706","info":"#1e40af"}
     codes_rows = "\n".join(
-        f'<tr><td style="padding:3px 8px 3px 0"><code>{c}</code></td>'
+        f'<tr><td>{escape(category_for(c))}</td><td style="padding:3px 8px 3px 0"><code>{c}</code></td>'
         f'<td style="color:{level_colors.get(l,"#374151")};font-size:12px">{l}</td>'
         f'<td style="font-size:12px;color:#374151">{desc}</td></tr>'
-        for c, l, desc in CODES
+        for c, l, desc in sorted(CODES, key=lambda item: (category_for(item[0]), item[0]))
     )
 
     # ── metrics cards ─────────────────────────────────────────────────────
@@ -450,14 +452,14 @@ input[type=search]:focus {{ border-color:#1c99c7 }}
   </div>
   <div class="filter-bar">
     <input type="search" id="iss-q" placeholder="Filter issues…" oninput="filterIssues()">
-    <label for="iss-sort">Sort by</label><select id="iss-sort" onchange="sortIssues()"><option value="severity">Severity (errors first)</option><option value="code">Issue code</option><option value="file">File</option></select>
+    <label for="iss-sort">Sort by</label><select id="iss-sort" onchange="sortIssues()"><option value="category">Category</option><option value="severity">Severity (errors first)</option><option value="code">Rule code</option><option value="file">File</option></select>
     <label for="iss-order">Order</label><select id="iss-order" onchange="sortIssues()"><option value="asc">Ascending</option><option value="desc">Descending</option></select>
     <button class="btn" style="background:#fee2e2;color:#991b1b;border-color:#fca5a5" onclick="filterLvl('error')">ERROR</button>
     <button class="btn" style="background:#fef3c7;color:#92400e;border-color:#fcd34d" onclick="filterLvl('warning')">WARNING</button>
     <button class="btn" style="background:#f1f5f9;color:#374151;border-color:#e2e8f0" onclick="filterLvl('')">All</button>
   </div>
   <table id="iss-tbl">
-    <thead><tr><th>File</th><th>Level</th><th>Code</th><th>Message</th></tr></thead>
+    <thead><tr><th>File</th><th>Level</th><th>Category</th><th>Rule code</th><th>Message</th></tr></thead>
     <tbody>{issues_html}</tbody>
   </table>
 </section>
@@ -562,7 +564,7 @@ input[type=search]:focus {{ border-color:#1c99c7 }}
     <div class="sec-head">🔍 All issue codes ({len(CODES)} checks)</div>
     <div class="chart-section" style="max-height:400px;overflow-y:auto">
       <table style="font-size:12px">
-        <thead><tr><th>Code</th><th>Level</th><th>Check</th></tr></thead>
+        <thead><tr><th>Category</th><th>Rule code</th><th>Level</th><th>Check</th></tr></thead>
         <tbody>{codes_rows}</tbody>
       </table>
     </div>

@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import json
 import secrets
 import tempfile
 from dataclasses import asdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 
 from web_sources import browse, download_repository, extract_repository, repository_name
@@ -17,6 +19,59 @@ from reporting.paths import display_path
 from scanning.scanner import scan, scan_file, scan_test
 
 ASSETS = Path(__file__).parent / 'web'
+
+
+MAX_UPLOAD = 10 * 1024 * 1024
+
+
+def audit_upload(payload):
+    files = payload.get('files')
+    if not isinstance(files, list) or not 0 < len(files) <= 2000:
+        raise ValueError('Choose between 1 and 2,000 files.')
+    folder = payload.get('folder', False)
+    if not isinstance(folder, bool) or (not folder and len(files) != 1):
+        raise ValueError('Choose one Python file or a folder.')
+    with tempfile.TemporaryDirectory(prefix='pytest-auditor-upload-') as directory:
+        root = Path(directory)
+        total, seen = 0, set()
+        for item in files:
+            name = item.get('path', '')
+            path = PurePosixPath(name)
+            if not name or path.is_absolute() or '..' in path.parts or '\\' in name or ':' in name or '\x00' in name or not path.parts:
+                raise ValueError('Unsafe upload path.')
+            if path in seen:
+                raise ValueError('Duplicate upload path.')
+            seen.add(path)
+            if path.suffix.lower() != '.py' and path.name not in {'pytest.ini', 'pyproject.toml', 'setup.cfg', 'tox.ini', 'coverage.json'}:
+                raise ValueError('Upload only Python sources and pytest/coverage configuration.')
+            try:
+                data = base64.b64decode(item.get('content', ''), validate=True)
+            except (binascii.Error, ValueError):
+                raise ValueError('Invalid uploaded file encoding.') from None
+            total += len(data)
+            if total > MAX_UPLOAD:
+                raise ValueError('Upload exceeds the 10 MB limit.')
+            target = root.joinpath(*path.parts)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+        if not folder and next(iter(seen)).suffix.lower() != '.py':
+            raise ValueError('Single-file uploads require a Python file.')
+        target = root if folder else root.joinpath(*next(iter(seen)).parts)
+        # Browser folder selections include the selected directory's name.
+        roots = {path.parts[0] for path in seen}
+        if folder and len(roots) == 1 and (root / next(iter(roots))).is_dir():
+            target = root / next(iter(roots))
+        result = audit(dict(payload, source='local', path=str(target),
+                            _folder_name=target.name if folder and target != root else 'upload'))
+        def normalize(value):
+            if isinstance(value, str):
+                return value.replace(str(root), 'upload')
+            if isinstance(value, list):
+                return [normalize(item) for item in value]
+            if isinstance(value, dict):
+                return {normalize(key): normalize(item) for key, item in value.items()}
+            return value
+        return normalize(result)
 
 
 def audit(payload):
@@ -47,7 +102,7 @@ def audit(payload):
             return normalize(result)
     if source != "local":
         raise ValueError("Choose local or GitHub source.")
-    mode = payload.get('mode', 'suite')
+    mode = payload.get('mode') or ('test' if payload.get('test', '').strip() else 'suite')
     if mode not in {'suite', 'file', 'test'}:
         raise ValueError('Choose suite, file, or test mode.')
     path = Path(payload.get('path', '')).expanduser().resolve()
@@ -100,18 +155,22 @@ class Handler(BaseHTTPRequestHandler):
         self.respond(200, (ASSETS / name).read_text(encoding='utf-8'), kind)
 
     def do_POST(self):
-        if self.path not in {'/api/audit', '/api/browse'}:
+        if self.path not in {'/api/audit', '/api/browse', '/api/upload'}:
             return self.respond(404, json.dumps({'error': 'Not found'}))
         if self.headers.get('X-Audit-Token') != self.server.token:
             return self.respond(403, json.dumps({'error': 'Invalid session. Reload the page.'}))
         try:
             size = int(self.headers.get('Content-Length', '0'))
-            if not 0 < size <= 16384:
+            limit = 15 * 1024 * 1024 if self.path == '/api/upload' else 16384
+            if not 0 < size <= limit:
                 raise ValueError('Request is too large or empty.')
             payload = json.loads(self.rfile.read(size))
             if not isinstance(payload, dict):
                 raise ValueError('Expected an audit request.')
-            result = browse(payload.get('path', '')) if self.path == '/api/browse' else audit(payload)
+            if self.path == '/api/upload':
+                result = audit_upload(payload)
+            else:
+                result = browse(payload.get('path', '')) if self.path == '/api/browse' else audit(payload)
         except (ValueError, OSError, TypeError, AttributeError) as error:
             return self.respond(400, json.dumps({'error': str(error)}))
         except Exception:

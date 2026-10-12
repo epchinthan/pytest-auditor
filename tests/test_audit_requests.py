@@ -68,10 +68,9 @@ def test_github_audit_removes_temporary_checkout(mode, zip_archive, example_test
                     'ref': 'feature/tests', 'mode': mode, 'test': 'test_placeholder',
                     'path': 'tests' if mode == 'suite' else 'tests/test_example.py'})
     assert result['report']['total_tests'] == (1 if mode == 'test' else 2)
-    assert result['report']['root'].startswith('github:example/repo@feature/tests')
     assert downloads == [('example/repo', 'feature/tests', '')]
-    assert len(directories) == 1 and not directories[0].exists()
-    assert 'pytest-auditor-github-' not in result['html']
+    assert len(directories) == 1
+    assert not directories[0].exists()
 
 
 # Cleanup must also run when repository-relative path validation raises an error.
@@ -88,4 +87,13 @@ def test_rejected_github_path_also_removes_checkout(zip_archive, monkeypatch):
     monkeypatch.setattr(web_server, 'extract_repository', record_extraction)
     with pytest.raises(ValueError, match='inside'):
         audit({'source': 'github', 'repository': 'example/repo', 'path': '../escape'})
-    assert len(destinations) == 1 and not destinations[0].exists()
+    assert len(destinations) == 1
+    assert not destinations[0].exists()
+
+
+def test_github_report_uses_repository_paths(zip_archive, example_test_file, monkeypatch):
+    data = zip_archive({'repo-sha/tests/test_example.py': example_test_file.read_text()})
+    monkeypatch.setattr(web_server, 'download_repository', lambda *args: data)
+    result = audit({'source': 'github', 'repository': 'example/repo', 'ref': 'feature/tests'})
+    assert result['report']['root'].startswith('github:example/repo@feature/tests')
+    assert 'pytest-auditor-github-' not in result['html']

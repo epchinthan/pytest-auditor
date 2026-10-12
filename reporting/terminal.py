@@ -126,26 +126,26 @@ def print_report(report: SuiteReport) -> None:
 
     # ── issue summary table ───────────────────────────────────────────────
     if report.total_issues:
-        # group by code
         from collections import Counter
-        codes: Counter = Counter()
-        msgs: dict = {}
+        counts = Counter()
+        rules = {}
         for f in report.files:
-            for i in f.issues:
-                codes[i.code] += 1
-                msgs[i.code]   = (i.level, i.message.split(":")[0] if ":" in i.message else i.message[:60])
+            for issue in f.issues:
+                key = (issue.category, issue.level)
+                counts[key] += 1
+                rules.setdefault(key, set()).add(issue.code)
 
         tbl = Table(title="Issue Summary", box=box.ROUNDED, border_style="bright_blue",
                     title_style="bold white", padding=(0, 1))
-        tbl.add_column("Code",    style="dim",        width=6)
-        tbl.add_column("Level",   width=9)
-        tbl.add_column("Count",   justify="right",    width=6)
-        tbl.add_column("Description")
-
-        for code, count in sorted(codes.items(), key=lambda x: -x[1]):
-            level, msg = msgs[code]
+        tbl.add_column("Category")
+        tbl.add_column("Level", width=9)
+        tbl.add_column("Count", justify="right", width=6)
+        tbl.add_column("Rule codes", style="dim")
+        ranks = {"error": 0, "warning": 1, "info": 2}
+        for (category, level), count in sorted(counts.items(), key=lambda item: (item[0][0], ranks.get(item[0][1], 3))):
             style = LEVEL_STYLE[level]
-            tbl.add_row(code, f"[{style}]{level}[/{style}]", str(count), msg)
+            tbl.add_row(category, f"[{style}]{level}[/{style}]", str(count),
+                        ", ".join(sorted(rules[(category, level)])))
 
         console.print(tbl)
         console.print()

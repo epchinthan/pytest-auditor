@@ -56,3 +56,12 @@ def test_empty_report_is_unassessed_and_cannot_pass_a_zero_threshold(tmp_path):
     assert not result['passed']
     assert '<div class="score-num">—</div>' in result['html']
     assert 'Not assessed' in result['html']
+
+
+def test_categories_are_exported_with_original_rule_codes(example_test_file):
+    result = audit({'path': str(example_test_file), 'mode': 'file'})
+    issue = next(i for f in result['report']['files'] for i in f['issues'] if i['code'] == 'T019')
+    assert issue['category'] == 'Assertions & verification'
+    assert 'Assertions &amp; verification' in result['html']
+    assert '<th>Rule code</th>' in result['html']
+    assert 'data-category="Assertions &amp; verification"' in result['html']

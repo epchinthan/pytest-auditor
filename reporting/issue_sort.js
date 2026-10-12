@@ -4,7 +4,8 @@ function compareIssues(a, b, key = 'severity', direction = 'asc') {
   const severity = issue => ({error:0, warning:1, info:2}[issue.level] ?? 3);
   const file = () => text(a.file, b.file) || Number(a.line || 0) - Number(b.line || 0);
   let comparison;
-  if (key === 'code') comparison = text(a.code, b.code) || severity(a) - severity(b) || file();
+  if (key === 'category') comparison = text(a.category, b.category) || severity(a) - severity(b) || text(a.code, b.code) || file();
+  else if (key === 'code') comparison = text(a.code, b.code) || severity(a) - severity(b) || file();
   else if (key === 'file') comparison = file() || severity(a) - severity(b) || text(a.code, b.code);
   else comparison = severity(a) - severity(b) || text(a.code, b.code) || file();
   return direction === 'desc' ? -comparison : comparison;

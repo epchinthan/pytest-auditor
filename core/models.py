@@ -8,6 +8,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from core.categories import category_for
+
 # ── issue levels ──────────────────────────────────────────────────────────────
 
 ERROR   = "error"
@@ -27,6 +29,10 @@ class Issue:
     line:    int = 0
     explanation: str = ""
     suggestion: str = ""
+    category: str = field(init=False)
+
+    def __post_init__(self):
+        self.category = category_for(self.code)
 
 
 @dataclass

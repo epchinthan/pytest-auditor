@@ -628,11 +628,20 @@ def mock_any_overused(node: ast.AST) -> bool:
     return src.count("mock.ANY") + src.count(", ANY") >= 3
 
 def patch_targets(node: ast.AST) -> list[str]:
+    """Return literal dotted targets, not object-based setattr/patch calls."""
     targets = []
-    for n in ast.walk(node):
-        if isinstance(n, ast.Call) and "patch" in unparse(n.func) and n.args:
-            targets.append(unparse(n.args[0]).strip("\"'"))
+    for call in ast.walk(node):
+        if not isinstance(call, ast.Call) or not call.args:
+            continue
+        function = call.func
+        name = function.attr if isinstance(function, ast.Attribute) else getattr(function, 'id', '')
+        target = call.args[0]
+        if not isinstance(target, ast.Constant) or not isinstance(target.value, str):
+            continue
+        if name == 'patch' or (name == 'setattr' and len(call.args) == 2):
+            targets.append(target.value)
     return targets
+
 
 def uses_unittest_mock_import(tree: ast.AST) -> bool:
     for n in ast.walk(tree):

@@ -602,6 +602,16 @@ The default **B1** plan is billable. For limited free testing, use:
 AZURE_APP_SERVICE_SKU=F1 ./runazure.sh
 ```
 
+For faster source updates after the first deployment:
+
+```bash
+./runazure.sh --deploy-only
+```
+
+This skips provisioning and runtime/settings updates; use the normal command to
+repair configuration or migrate an existing container app. Deployment restarts
+the app once, then checks HTTPS readiness.
+
 The SKU applies when creating a plan; existing plans keep their tier. F1 has daily
 CPU limits and no Always On. Availability and quotas depend on subscription and
 region. Existing resource-group location is reused; region admission or quota failures try
@@ -614,7 +624,17 @@ Set `AZURE_OPEN_BROWSER=0` in CI. Initial login/MFA can require interaction;
 `AZURE_MANAGED_IDENTITY=1` supports a configured Azure host.
 The Azure CLI installs into `.azure-cli` if absent and uses its own Python.
 
-Hosted audits use GitHub sources; local folders are not mounted in Azure.
+Hosted audits accept GitHub sources or **Upload from laptop**. Choose a Python
+file or folder; scope is inferred automatically. Uploads include Python sources and
+pytest/coverage configuration, preserve folder structure, and are deleted after
+the audit. Limits: 10 MB and 2,000 files. Local server paths refer to the machine
+running the app; they cannot read your laptop from Azure.
 Azure resources remain billable after the script exits.
 For deployment failures, use `az webapp log deployment show --name APP --resource-group GROUP`;
 for startup failures, use `az webapp log tail --name APP --resource-group GROUP`.
+
+Reports group related rules under readable categories such as Assertions & verification,
+Parametrization, Fixtures, Mocking, Browser reliability, and Isolation & side effects.
+Web and HTML reports sort by category by default, and keep rule codes for reference.
+JSON findings include both `category` and `code`; terminal summaries aggregate by
+category and severity.
