@@ -49,6 +49,7 @@ def analyse_file(
     report.issues += checks.check_unittest_mock_import(tree, path)
     report.issues += checks.check_module_level_mock(tree, path)
     report.issues += checks.check_import_style(tree, path)
+    report.issues += checks.check_function_comments(tree, source, path)
 
     # ── collect fixtures defined in this file ──────────────────────────────
     file_fixtures: dict[str, ast.AST] = {}

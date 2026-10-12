@@ -97,6 +97,9 @@ def scan_test(file_path: Path, test_name: str) -> SuiteReport:
         target_node, file_path, target_class, all_fixture_names, set(reg_marks), tree
     )
 
+    test_issues += [issue for issue in checks.check_function_comments(tree, _source, file_path)
+                    if issue.line == target_node.lineno]
+
     focused = FileReport(path=str(file_path), test_count=1,
                          async_count=int(h.is_async(target_node)),
                          line_count=len(_source.splitlines()))

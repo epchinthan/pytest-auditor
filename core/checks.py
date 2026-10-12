@@ -743,3 +743,27 @@ def check_import_style(tree: ast.AST, path: Path) -> list[Issue]:
             "prefer 'import pytest' and use pytest.raises(), pytest.mark etc.",
             str(path))]
     return []
+
+def check_function_comments(tree: ast.AST, source: str, path: Path) -> list[Issue]:
+    """DOC01: standalone comments can precede or follow function decorators."""
+    import io
+    import tokenize
+    lines = source.splitlines()
+    comments = {token.start[0]: token for token in tokenize.generate_tokens(io.StringIO(source).readline)
+                if token.type == tokenize.COMMENT and token.string.lstrip('#').strip()
+                and not lines[token.start[0] - 1][:token.start[1]].strip()}
+    issues = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        start = min([node.lineno] + [decorator.lineno for decorator in node.decorator_list])
+        preceding = start - 1
+        while preceding > 0 and not lines[preceding - 1].strip():
+            preceding -= 1
+        candidates = list(range(start, node.lineno)) + [preceding]
+        if any(line in comments and comments[line].start[1] == node.col_offset for line in candidates):
+            continue
+        issues.append(Issue(INFO, 'DOC01',
+                            f"Function '{node.name}' has no explanatory comment before its definition or decorator block",
+                            str(path), node.lineno))
+    return issues

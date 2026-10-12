@@ -126,9 +126,9 @@ def browser_test_suite(tmp_path):
     (root / '__init__.py').write_text('')
     (root / 'conftest.py').write_text('')
     (root / 'test_alpha.py').write_text(
-        'import pytest\n@pytest.mark.unit\ndef test_missing_verification():\n    value = 42\n'
+        'import pytest\n# Check verification detection.\n@pytest.mark.unit\ndef test_missing_verification():\n    value = 42\n'
     )
     (root / 'test_beta.py').write_text(
-        'import pytest\n@pytest.mark.unit\ndef test_placeholder():\n    print("debug")\n    assert True\n'
+        'import pytest\n# Check placeholder detection.\n@pytest.mark.unit\ndef test_placeholder():\n    print("debug")\n    assert True\n'
     )
     return root

@@ -22,3 +22,17 @@ def test_patch_target_diagnostics(write_test_file, calls, expected):
     codes = {issue.code for file in report.files for issue in file.issues
              if issue.code in {'MK06', 'MK07'}}
     assert codes == expected
+
+
+# Only actual mocker.patch calls qualify for the lambda replacement suggestion.
+@pytest.mark.parametrize('call,expected', [
+    ("monkeypatch.setattr(module, 'value', lambda: 1)", set()),
+    ("mocker.patch('module.value', lambda: 1)", {'MK08'}),
+    ('example = "mocker.patch(module.value, lambda: 1)"', set()),
+], ids=['monkeypatch-replacement', 'mocker-lambda', 'literal-example'])
+def test_mock_style_checks_actual_calls(write_test_file, call, expected):
+    path = write_test_file('def test_value(monkeypatch, mocker, module):\n    '
+                           + call + '\n    module.value.assert_called_once()\n    assert module is not None\n')
+    report = scan_file(path)
+    codes = {issue.code for file in report.files for issue in file.issues if issue.code in {'MK01', 'MK08'}}
+    assert codes == expected

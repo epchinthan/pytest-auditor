@@ -3,6 +3,7 @@
 # Keep the observed message on the issue; this catalog explains its consequence
 # and gives a concrete next step rather than treating a static finding as proof.
 _DATA = '''
+DOC01|A short comment helps readers understand the function’s purpose before reading its implementation.|Add an explanatory # comment immediately before the function or its decorator block, or between decorators and the definition.
 T001|No recognized verification was found. Running code without checking its result can let regressions pass.|Assert a meaningful result, use pytest.raises for an expected exception, or use a Playwright expect matcher. If a helper verifies the result, review that helper.
 T002|Many assertions can make a failing test difficult to diagnose and may combine unrelated behaviors.|Keep assertions for one behavior together; split independent scenarios or parametrize repeated inputs.
 T003|A failure in a loop stops later cases and hides which input failed.|Parametrize independent cases so pytest reports each separately. Keep a loop when it represents one workflow.

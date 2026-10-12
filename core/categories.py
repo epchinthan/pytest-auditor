@@ -13,6 +13,7 @@ GROUPS = {
     'File parsing': 'F001 F002',
     'Security': 'F003',
     'Analysis notes': 'INFO',
+    'Documentation': 'DOC01',
 }
 CATEGORIES = {code: category for category, codes in GROUPS.items() for code in codes.split()}
 PREFIX_CATEGORIES = {

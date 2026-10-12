@@ -56,14 +56,13 @@ def generate_html(report: SuiteReport, out_path: Path, folder_name: str | None =
                 f'<td><code style="font-size:12px">{escape(rel)}{loc}</code></td>'
                 f'<td>{_badge(i.level)}</td>'
                 f'<td>{escape(i.category)}</td>'
-                f'<td><code style="font-size:11px;color:#6b7280">{i.code}</code></td>'
                 f'<td style="font-size:13px">{escape(i.message)}'
                 f'<details><summary>Why this matters · How to fix</summary>'
                 f'<p>{escape(i.explanation)}</p><p><strong>Suggested fix:</strong> {escape(i.suggestion)}</p></details></td>'
                 f'</tr>'
             )
     issues_html = "\n".join(issue_rows) or (
-        '<tr><td colspan="5" style="text-align:center;color:#16a34a;padding:20px">✔ No issues</td></tr>'
+        '<tr><td colspan="4" style="text-align:center;color:#16a34a;padding:20px">✔ No issues</td></tr>'
     )
 
     # ── file rows ─────────────────────────────────────────────────────────
@@ -221,6 +220,7 @@ def generate_html(report: SuiteReport, out_path: Path, folder_name: str | None =
     # ── full codes reference ───────────────────────────────────────────────
     CODES = [
         # Test quality
+        ("DOC01","info", "Function has no explanatory comment before its definition or decorators"),
         ("T001","error",  "No recognized verification — review assertions or helper"),
         ("T002","warning","Too many assertions (>5) — split or use parametrize"),
         ("T003","warning","Loop with assert inside — use @parametrize instead"),
@@ -315,17 +315,14 @@ def generate_html(report: SuiteReport, out_path: Path, folder_name: str | None =
 
     level_colors = {"error":"#dc2626","warning":"#d97706","info":"#1e40af"}
     codes_rows = "\n".join(
-        f'<tr><td>{escape(category_for(c))}</td><td style="padding:3px 8px 3px 0"><code>{c}</code></td>'
+        f'<tr><td>{escape(category_for(c))}</td>'
         f'<td style="color:{level_colors.get(l,"#374151")};font-size:12px">{l}</td>'
         f'<td style="font-size:12px;color:#374151">{desc}</td></tr>'
         for c, l, desc in sorted(CODES, key=lambda item: (category_for(item[0]), item[0]))
     )
 
     # ── metrics cards ─────────────────────────────────────────────────────
-    debt_label = ("Low" if report.test_debt_pct <= 5
-                  else "Moderate" if report.test_debt_pct <= 15 else "High")
-    iso_label  = ("Good" if report.isolation_score >= 70
-                  else "Moderate" if report.isolation_score >= 40 else "Low")
+
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -425,14 +422,14 @@ input[type=search]:focus {{ border-color:#1c99c7 }}
   <div class="card"><div class="val" style="color:#d97706">{report.warnings}</div><div class="lbl">Warnings</div></div>
   <div class="card"><div class="val" style="color:#1e40af">{report.infos}</div><div class="lbl">Info</div></div>
   <div class="card">
-    <div class="val" style="color:{debt_col}">{report.test_debt_pct:.0f}%</div>
-    <div class="lbl">Test debt</div>
-    <div style="font-size:10px;color:#9ca3af;margin-top:2px">{report.skip_count} skip · {report.xfail_count} xfail · {debt_label}</div>
+    <div class="val" style="color:{debt_col}">{report.skip_count} / {report.xfail_count}</div>
+    <div class="lbl">Skip / expected-failure marks</div>
+    <div style="font-size:10px;color:#9ca3af;margin-top:2px">Tests marked skip or skipif / tests marked xfail</div>
   </div>
   <div class="card">
-    <div class="val" style="color:{iso_col}">{report.isolation_score:.0f}%</div>
-    <div class="lbl">Isolation</div>
-    <div style="font-size:10px;color:#9ca3af;margin-top:2px">fn-scoped fixtures · {iso_label}</div>
+    <div class="val" style="color:{iso_col}">{f'{report.isolation_score:.0f}%' if report.total_fixtures else '—'}</div>
+    <div class="lbl">Function-scoped fixtures</div>
+    <div style="font-size:10px;color:#9ca3af;margin-top:2px">{'Fixtures created separately for each test' if report.total_fixtures else 'Not applicable — no fixtures'}</div>
   </div>
 </div>
 
@@ -452,14 +449,14 @@ input[type=search]:focus {{ border-color:#1c99c7 }}
   </div>
   <div class="filter-bar">
     <input type="search" id="iss-q" placeholder="Filter issues…" oninput="filterIssues()">
-    <label for="iss-sort">Sort by</label><select id="iss-sort" onchange="sortIssues()"><option value="category">Category</option><option value="severity">Severity (errors first)</option><option value="code">Rule code</option><option value="file">File</option></select>
+    <label for="iss-sort">Sort by</label><select id="iss-sort" onchange="sortIssues()"><option value="category">Category</option><option value="severity">Severity (errors first)</option><option value="file">File</option></select>
     <label for="iss-order">Order</label><select id="iss-order" onchange="sortIssues()"><option value="asc">Ascending</option><option value="desc">Descending</option></select>
     <button class="btn" style="background:#fee2e2;color:#991b1b;border-color:#fca5a5" onclick="filterLvl('error')">ERROR</button>
     <button class="btn" style="background:#fef3c7;color:#92400e;border-color:#fcd34d" onclick="filterLvl('warning')">WARNING</button>
     <button class="btn" style="background:#f1f5f9;color:#374151;border-color:#e2e8f0" onclick="filterLvl('')">All</button>
   </div>
   <table id="iss-tbl">
-    <thead><tr><th>File</th><th>Level</th><th>Category</th><th>Rule code</th><th>Message</th></tr></thead>
+    <thead><tr><th>File</th><th>Level</th><th>Category</th><th>Message</th></tr></thead>
     <tbody>{issues_html}</tbody>
   </table>
 </section>
@@ -542,11 +539,11 @@ input[type=search]:focus {{ border-color:#1c99c7 }}
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">
         <div style="background:#f8fafc;padding:8px 10px;border-radius:6px;border:1px solid #e2e8f0">
           <div style="font-size:20px;font-weight:700;color:{debt_col}">{report.test_debt_pct:.1f}%</div>
-          <div style="font-size:11px;color:#6b7280">Test debt ({report.skip_count} skip + {report.xfail_count} xfail)</div>
+          <div style="font-size:11px;color:#6b7280">Skip + expected-failure mark rate ({report.skip_count} skip/skipif + {report.xfail_count} xfail). Marks do not confirm runtime outcomes.</div>
         </div>
         <div style="background:#f8fafc;padding:8px 10px;border-radius:6px;border:1px solid #e2e8f0">
-          <div style="font-size:20px;font-weight:700;color:{iso_col}">{report.isolation_score:.0f}%</div>
-          <div style="font-size:11px;color:#6b7280">Isolation (fn-scoped fixtures)</div>
+          <div style="font-size:20px;font-weight:700;color:{iso_col}">{f'{report.isolation_score:.0f}%' if report.total_fixtures else '—'}</div>
+          <div style="font-size:11px;color:#6b7280">Function-scoped fixtures ({'created separately for each test' if report.total_fixtures else 'not applicable — no fixtures'})</div>
         </div>
         <div style="background:#f8fafc;padding:8px 10px;border-radius:6px;border:1px solid #e2e8f0">
           <div style="font-size:20px;font-weight:700;color:#004d65">{report.async_count}</div>
@@ -564,7 +561,7 @@ input[type=search]:focus {{ border-color:#1c99c7 }}
     <div class="sec-head">🔍 All issue codes ({len(CODES)} checks)</div>
     <div class="chart-section" style="max-height:400px;overflow-y:auto">
       <table style="font-size:12px">
-        <thead><tr><th>Category</th><th>Rule code</th><th>Level</th><th>Check</th></tr></thead>
+        <thead><tr><th>Category</th><th>Level</th><th>Check</th></tr></thead>
         <tbody>{codes_rows}</tbody>
       </table>
     </div>

@@ -63,5 +63,5 @@ def test_categories_are_exported_with_original_rule_codes(example_test_file):
     issue = next(i for f in result['report']['files'] for i in f['issues'] if i['code'] == 'T019')
     assert issue['category'] == 'Assertions & verification'
     assert 'Assertions &amp; verification' in result['html']
-    assert '<th>Rule code</th>' in result['html']
+    assert '<th>Rule code</th>' not in result['html']
     assert 'data-category="Assertions &amp; verification"' in result['html']

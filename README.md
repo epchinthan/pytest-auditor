@@ -635,6 +635,12 @@ for startup failures, use `az webapp log tail --name APP --resource-group GROUP`
 
 Reports group related rules under readable categories such as Assertions & verification,
 Parametrization, Fixtures, Mocking, Browser reliability, and Isolation & side effects.
-Web and HTML reports sort by category by default, and keep rule codes for reference.
-JSON findings include both `category` and `code`; terminal summaries aggregate by
+Web and HTML reports sort by category by default and show category names without a rule-code column.
+JSON findings retain `category` and `code` for integrations; terminal summaries aggregate by
 category and severity.
+
+The Documentation check flags functions without an explanatory standalone `#`
+comment. It accepts comments immediately before the definition, before the first
+decorator, between decorators, or after the last decorator. Multiline decorators,
+async functions, fixtures, and helpers are supported. A body comment or docstring
+does not replace this preceding-comment check. Findings are informational.

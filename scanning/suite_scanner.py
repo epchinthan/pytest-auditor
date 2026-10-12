@@ -181,7 +181,7 @@ def _compute_score(report: SuiteReport) -> None:
     units = max(1, report.total_tests + report.total_fixtures + len(unreadable))
     # Structural stub reports can repeat locations. Count each finding once.
     findings = {(i.file, i.line, i.code, i.level) for f in report.files for i in f.issues
-                if i.code != "INFO" and not (i.code == "T001" and i.level == "info")}
+                if i.code not in {"INFO", "DOC01"} and not (i.code == "T001" and i.level == "info")}
     counts = {level: sum(i[3] == level for i in findings) for level in ("error", "warning", "info")}
     deductions = {
         "Errors": 60 * min(1, counts["error"] / units),
@@ -204,7 +204,7 @@ def _compute_score(report: SuiteReport) -> None:
         "status": "no_tests" if no_tests else "provisional" if unreadable else "assessed",
         "note": ("No tests were found; there is no assessed quality score." if no_tests else
                  "Some files could not be analyzed; fix parsing errors before relying on this score." if unreadable else
-                 "Finding rates are normalized by tests plus fixtures. Suggestions have limited impact; helper notes have none."),
+                 "Finding rates are normalized by tests plus fixtures. Suggestions have limited impact; helper and documentation notes have none."),
     }
     if not no_tests and error_cap is not None:
         report.score_breakdown["note"] += " At least one error was found, so the total score cannot exceed 70/100."

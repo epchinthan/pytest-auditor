@@ -41,16 +41,16 @@ def test_run_audit_and_view_results(page: Page, app_url, browser_test_suite, mod
 @pytest.mark.parametrize('key,direction,expected_codes', [
     ('severity', 'asc', ['T001', 'T019', 'T012']),
     ('severity', 'desc', ['T012', 'T019', 'T001']),
-    ('code', 'asc', ['T001', 'T012', 'T019']),
-    ('code', 'desc', ['T019', 'T012', 'T001']),
+    ('category', 'asc', ['T001', 'T019', 'T012']),
+    ('category', 'desc', ['T012', 'T019', 'T001']),
     ('file', 'asc', ['T001', 'T019', 'T012']),
     ('file', 'desc', ['T012', 'T019', 'T001']),
-], ids=['severity-first', 'severity-last', 'code-ascending', 'code-descending',
+], ids=['severity-first', 'severity-last', 'category-ascending', 'category-descending',
         'file-ascending', 'file-descending'])
 def test_issue_sorting_orders_every_row(page: Page, page_with_audit_results, key, direction, expected_codes):
     page.get_by_label('Sort by', exact=True).select_option(key)
     page.get_by_label('Order', exact=True).select_option(direction)
-    expect(page.locator('#table tbody tr td:nth-child(5)')).to_have_text(expected_codes)
+    assert page.locator('#table tbody tr').evaluate_all('(rows) => rows.map(row => row.dataset.code)') == expected_codes
 
 
 # Changing one filter must not silently discard the other filter’s selection.
@@ -58,11 +58,11 @@ def test_search_and_severity_filters_work_together(page: Page, page_with_audit_r
     page.get_by_label('Severity', exact=True).select_option('warning')
     page.get_by_label('Search results').fill('T019')
     expect(page.locator('#table tbody tr')).to_have_count(1)
-    expect(page.locator('#table tbody tr td:nth-child(5)')).to_have_text(['T019'])
+    assert page.locator('#table tbody tr').evaluate_all('(rows) => rows.map(row => row.dataset.code)') == ['T019']
     page.get_by_label('Severity', exact=True).select_option('error')
     expect(page.get_by_text('No results for this view or filter.')).to_be_visible()
     page.get_by_label('Search results').fill('')
-    expect(page.locator('#table tbody tr td:nth-child(5)')).to_have_text(['T001'])
+    assert page.locator('#table tbody tr').evaluate_all('(rows) => rows.map(row => row.dataset.code)') == ['T001']
 
 
 def test_finding_explanation_can_be_opened(page: Page, page_with_audit_results):
@@ -168,10 +168,10 @@ def test_html_download_is_interactive_offline(page: Page, page_with_audit_result
     output = tmp_path / 'download.html'
     event.value.save_as(output)
     page.goto(output.as_uri())
-    page.get_by_label('Sort by', exact=True).select_option('code')
-    expect(page.locator('#iss-tbl tbody tr td:nth-child(4)')).to_have_text(['T001', 'T012', 'T019'])
+    page.get_by_label('Sort by', exact=True).select_option('category')
+    expect(page.locator('#iss-tbl tbody tr td:nth-child(3)')).to_have_text(['Assertions & verification', 'Assertions & verification', 'Debugging & maintainability'])
     page.get_by_label('Order', exact=True).select_option('desc')
-    expect(page.locator('#iss-tbl tbody tr td:nth-child(4)')).to_have_text(['T019', 'T012', 'T001'])
+    expect(page.locator('#iss-tbl tbody tr td:nth-child(3)')).to_have_text(['Debugging & maintainability', 'Assertions & verification', 'Assertions & verification'])
 
 
 # Users can run an audit without choosing a threshold; errors explain the score cap.
@@ -212,7 +212,7 @@ def test_related_rules_group_under_readable_categories(page: Page, page_with_aud
     expect(page.get_by_label('Sort by', exact=True)).to_have_value('category')
     expect(page.locator('#table tbody tr td:nth-child(4)')).to_have_text([
         'Assertions & verification', 'Assertions & verification', 'Debugging & maintainability'])
-    expect(page.locator('#table tbody tr td:nth-child(5)')).to_have_text(['T001','T019','T012'])
+    assert page.locator('#table tbody tr').evaluate_all('(rows) => rows.map(row => row.dataset.code)') == ['T001','T019','T012']
     page.get_by_label('Search results').fill('Assertions & verification')
     expect(page.locator('#table tbody tr')).to_have_count(2)
     page.get_by_label('Search results').fill('')

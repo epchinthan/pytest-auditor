@@ -73,7 +73,7 @@ def test_duplicate_locations_count_once():
 
 
 # Navigation notes and delegated assertions are informational rather than test defects.
-@pytest.mark.parametrize('code', ['INFO', 'T001'], ids=['helper-reference', 'delegated-verification'])
+@pytest.mark.parametrize('code', ['INFO', 'T001', 'DOC01'], ids=['helper-reference', 'delegated-verification', 'documentation'])
 def test_helper_notes_do_not_reduce_score(code):
     note = Issue('info', code, 'Helper verifies result', '/tests/test_app.py', 1)
     assert scored_report(1, extra_issues=[note]).score == 100

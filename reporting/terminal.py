@@ -116,7 +116,7 @@ def print_report(report: SuiteReport) -> None:
                 loc   = f"[dim cyan]line {issue.line}[/dim cyan]  " if issue.line else ""
                 console.print(
                     f"    [{style}]{label:<7}[/{style}] "
-                    f"[dim]{issue.code}[/dim]  "
+                    f"[dim]{issue.category}[/dim]  "
                     f"{loc}"
                     f"{issue.message}"
                 )
@@ -128,24 +128,20 @@ def print_report(report: SuiteReport) -> None:
     if report.total_issues:
         from collections import Counter
         counts = Counter()
-        rules = {}
         for f in report.files:
             for issue in f.issues:
                 key = (issue.category, issue.level)
                 counts[key] += 1
-                rules.setdefault(key, set()).add(issue.code)
 
         tbl = Table(title="Issue Summary", box=box.ROUNDED, border_style="bright_blue",
                     title_style="bold white", padding=(0, 1))
         tbl.add_column("Category")
         tbl.add_column("Level", width=9)
         tbl.add_column("Count", justify="right", width=6)
-        tbl.add_column("Rule codes", style="dim")
         ranks = {"error": 0, "warning": 1, "info": 2}
         for (category, level), count in sorted(counts.items(), key=lambda item: (item[0][0], ranks.get(item[0][1], 3))):
             style = LEVEL_STYLE[level]
-            tbl.add_row(category, f"[{style}]{level}[/{style}]", str(count),
-                        ", ".join(sorted(rules[(category, level)])))
+            tbl.add_row(category, f"[{style}]{level}[/{style}]", str(count))
 
         console.print(tbl)
         console.print()

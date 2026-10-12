@@ -606,8 +606,9 @@ def has_bare_except(node: ast.AST) -> bool:
     return False
 
 def patches_mock(node: ast.AST) -> bool:
-    src = unparse(node)
-    return ".patch(" in src or "mocker.patch" in src
+    return any(isinstance(call, ast.Call) and
+               re.fullmatch(r"(?:mocker|mock|unittest\.mock)\.patch(?:\.object)?|patch(?:\.object)?", unparse(call.func))
+               for call in ast.walk(node))
 
 def has_assert_called(node: ast.AST) -> bool:
     src = unparse(node)
@@ -824,7 +825,7 @@ def fixture_asyncio_mark(node: ast.AST) -> bool:
 def patch_uses_lambda(node: ast.AST) -> bool:
     """mocker.patch(x, lambda: y) — use return_value= instead."""
     for n in ast.walk(node):
-        if isinstance(n, ast.Call) and "patch" in unparse(n.func):
+        if isinstance(n, ast.Call) and unparse(n.func) == "mocker.patch":
             for arg in n.args[1:]:  # skip first (target string)
                 if isinstance(arg, ast.Lambda):
                     return True
