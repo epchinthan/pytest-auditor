@@ -12,7 +12,7 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
 Usage: ./run.sh [--check] [--port PORT]
 
 Checks Python 3.10+, creates .venv, and installs missing runtime dependencies.
-Starts the web UI at http://127.0.0.1:8765 unless --port is supplied.
+Starts the web UI at http://127.0.0.1:6767 unless --port is supplied.
 --check prepares the environment without starting the server.
 Stop the server with Ctrl+C.
 HELP

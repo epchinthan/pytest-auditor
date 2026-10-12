@@ -416,7 +416,7 @@ You can also start it directly with `.venv/bin/python web_server.py`. Browser
 binaries and development test dependencies are installed separately using the
 test instructions below; they are not needed to run the application.
 
-Open **http://127.0.0.1:8765**. Use `--port 9000` to choose another port.
+Open **http://127.0.0.1:6767**. Use `--port 9000` to choose another port.
 The server binds to your machine's loopback interface and adds no dependencies.
 Stop it with Ctrl+C.
 
@@ -544,3 +544,77 @@ Source snippets are test input data; comments distinguish them from the real
 browser cases. Empty-scan checks at the scoring, report, and browser layers
 verify different contracts. Serialization is verified at the HTTP/download
 boundaries instead of repeating JSON round-trip assertions in every audit test.
+
+
+## Docker launcher
+
+`./run.sh` starts the application locally. To build and start it in Docker:
+
+```bash
+./rundocker.sh
+```
+
+Docker and its Compose plugin must be installed, with the daemon running.
+The launcher waits for the app to be healthy, then prints
+**http://127.0.0.1:6767**. It runs in the background and publishes only on localhost.
+Python and runtime dependencies are installed in the image.
+
+The checkout is mounted read-only at `/workspace`; enter `/workspace/tests`
+in the UI to audit this repo. The folder picker browses container paths.
+To audit another project or choose a different host port:
+
+```bash
+AUDIT_SOURCE_DIR=/path/to/project AUDITOR_PORT=9000 ./rundocker.sh
+```
+
+Stop and remove this application's containers and network:
+
+```bash
+./rundocker.sh stop
+```
+
+The built image remains cached for the next start. Host files are preserved.
+Docker and local launchers need different ports when running at the same time.
+
+## Azure launcher
+
+```bash
+./runazure.sh
+```
+
+The launcher signs in through Microsoft’s browser login when needed, discovers
+an enabled subscription, and deploys a source ZIP to **Azure App Service for
+Linux with managed Python 3.12**. Docker and Container Registry are not required.
+Azure installs `requirements.txt` with Oryx and starts
+`python web_server.py --host 0.0.0.0 --port 8000`. The launcher checks the actual
+application over HTTPS before opening the URL.
+
+Only application sources and web assets are uploaded; local projects, credentials,
+virtual environments, and tooling are excluded. Reruns update the same app,
+including switching a previous container deployment to managed Python. Existing
+registries are left in place; delete an unused registry separately to stop its charges.
+
+Defaults: resource group `pytest-auditor-rg`, plan `pytest-auditor-plan`, region
+`westeurope`, and a deterministic app name based on subscription/resource group.
+The default **B1** plan is billable. For limited free testing, use:
+
+```bash
+AZURE_APP_SERVICE_SKU=F1 ./runazure.sh
+```
+
+The SKU applies when creating a plan; existing plans keep their tier. F1 has daily
+CPU limits and no Always On. Availability and quotas depend on subscription and
+region. Existing resource-group location is reused; region admission or quota failures try
+nearby European regions unless `AZURE_LOCATION` is explicitly set.
+
+Overrides: `AZURE_SUBSCRIPTION`, `AZURE_RESOURCE_GROUP`, `AZURE_LOCATION`,
+`AZURE_APP_NAME`, `AZURE_APP_SERVICE_PLAN`, and `AZURE_APP_SERVICE_SKU`.
+Set `AZURE_OPEN_BROWSER=0` in CI. Initial login/MFA can require interaction;
+`AZURE_NONINTERACTIVE=1` requires an existing login and prevents prompts.
+`AZURE_MANAGED_IDENTITY=1` supports a configured Azure host.
+The Azure CLI installs into `.azure-cli` if absent and uses its own Python.
+
+Hosted audits use GitHub sources; local folders are not mounted in Azure.
+Azure resources remain billable after the script exits.
+For deployment failures, use `az webapp log deployment show --name APP --resource-group GROUP`;
+for startup failures, use `az webapp log tail --name APP --resource-group GROUP`.
