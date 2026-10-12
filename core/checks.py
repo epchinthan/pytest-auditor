@@ -12,6 +12,8 @@ import re
 from pathlib import Path
 
 from core import ast_helpers as h
+from core import playwright as pw
+
 from core.models import (
     BUILTIN_MARKS,
     CREDENTIAL_PATTERN,
@@ -173,7 +175,7 @@ def check_fixture_scope_compat(
     if SCOPE_ORDER.get(caller_scope, 0) > SCOPE_ORDER.get(callee_scope, 0):
         return [Issue(ERROR, "FX05",
             f"Scope mismatch: '{caller_name}' ({caller_scope}) depends on "
-            f"'{callee_name}' ({callee_scope}) — outer scope must be ≥ inner",
+            f"'{callee_name}' ({callee_scope}) — requesting fixture cannot outlive its dependency",
             str(path), lineno)]
     return []
 
@@ -204,14 +206,23 @@ def check_test(
     rel     = str(path)
     pfx     = f"[{class_name}] " if class_name else ""
     name    = node.name
-    n_ass   = h.assert_count(node)
+    n_ass   = pw.assertion_count(node, tree)
+    browser_test = pw.is_playwright(node, tree)
+    if browser_test:
+        registered_marks = registered_marks | pw.MARKS
+        issues += pw.check(node, path, tree)
     marks   = h.get_marks(node)
     fn_len  = len(node.body)
     is_async = h.is_async(node)
+    unittest_owner = h.unittest_class_for(node, tree)
 
     # ── assertions ─────────────────────────────────────────────────────────
     if n_ass == 0 and not h.has_pytest_raises(node) and not h.has_non_assert_verification(node):
-        if h.calls_function_with_asserts(node, tree):
+        if h.calls_function_with_asserts(node, tree) or (tree is not None and any(
+            h.is_func(helper) and not h.is_test_func(helper)
+            and pw.expect_calls(helper, tree) and h.is_called_in_tree_any({helper.name}, node)
+            for helper in ast.walk(tree)
+        )):
             # test delegates assertions to a helper — legitimate pattern, but worth noting
             issues.append(Issue(INFO, "T001",
                 f"{pfx}{name}: no direct assert statements — "
@@ -219,10 +230,10 @@ def check_test(
                 rel, node.lineno))
         else:
             issues.append(Issue(ERROR, "T001",
-                f"{pfx}{name}: no assert statements — test proves nothing",
+                f"{pfx}{name}: no recognized verification — add an assertion or review the verifying helper",
                 rel, node.lineno))
 
-    elif n_ass > 5:
+    elif n_ass > 5 and not browser_test:
         issues.append(Issue(WARNING, "T002",
             f"{pfx}{name}: {n_ass} assertions — consider splitting or parametrize",
             rel, node.lineno))
@@ -254,14 +265,15 @@ def check_test(
             rel, node.lineno))
 
     # ── structure ──────────────────────────────────────────────────────────
-    if h.has_loop_with_assert(node):
+    if h.has_loop_with_assert(node) and not browser_test:
         issues.append(Issue(WARNING, "T003",
             f"{pfx}{name}: loop with assert — use @parametrize instead",
             rel, node.lineno))
 
     if fn_len > 30:
         issues.append(Issue(INFO, "T017",
-            f"{pfx}{name}: test body is {fn_len} lines — consider splitting",
+            (f"{pfx}{name}: browser workflow has {fn_len} statements — consider page objects or named steps"
+             if browser_test else f"{pfx}{name}: test body is {fn_len} lines — consider splitting"),
             rel, node.lineno))
 
     # ── fixtures ───────────────────────────────────────────────────────────
@@ -298,7 +310,7 @@ def check_test(
             rel, line))
 
     # ── async ──────────────────────────────────────────────────────────────
-    if is_async and not h.has_asyncio_mark(node) and not h.asyncio_mode_is_auto(tree):
+    if is_async and not (unittest_owner and any("IsolatedAsyncioTestCase" in h.unparse(b) for b in unittest_owner.bases)) and not h.has_asyncio_mark(node) and not h.asyncio_mode_is_auto(tree):
         issues.append(Issue(INFO, "T007",
             f"{pfx}{name}: async test without @pytest.mark.asyncio — "
             "add mark or set asyncio_mode=\'auto\' in pyproject.toml",
@@ -486,16 +498,20 @@ def check_registered_marks(
 
 # ── class-level checks ────────────────────────────────────────────────────────
 
-def check_class(node: ast.ClassDef, path: Path) -> list[Issue]:
+def check_class(node: ast.ClassDef, path: Path, tree: ast.AST | None = None) -> list[Issue]:
     issues = []
     rel = str(path)
 
-    if h.is_unittest_class(node):
+    if h.is_unittest_class(node, tree) and any(
+        h.is_func(method) and method.name.startswith("test") and len(method.args.args) > 1
+        for method in node.body
+    ):
         issues.append(Issue(WARNING, "N004",
             f"'{node.name}' inherits from TestCase — pytest fixtures won't inject",
             rel, node.lineno))
 
-    test_methods = [n for n in node.body if h.is_test_func(n)]
+    test_methods = [n for n in node.body if h.is_test_func(n) or
+                    h.is_unittest_class(node, tree) and h.is_func(n) and n.name.startswith("test")]
     has_setup = any(
         isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
         and n.name in ("setup_method", "teardown_method", "setup_class",

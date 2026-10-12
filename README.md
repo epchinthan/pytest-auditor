@@ -87,10 +87,82 @@ pytest --quality-report --report-json=audit.json
 
 ## Coverage integration
 
-```bash
-pytest --cov=myapp --cov-report=json
-python __main__.py tests        # reads coverage.json automatically
+Run coverage from the root of the project being tested. For example, a project
+named `inventory_service` might have this layout:
+
+```text
+inventory_service/
+  pyproject.toml
+  src/
+    inventory_service/
+      __init__.py
+      orders.py
+  tests/
+    test_orders.py
 ```
+
+Install the test dependencies in that project's uv environment:
+
+```bash
+uv add --dev pytest pytest-cov
+```
+
+To run the tests and display coverage for an importable package:
+
+```bash
+uv run python -m pytest tests --cov=inventory_service
+```
+
+`--cov` selects the Python package or source directory to measure; `tests`
+selects the test directory to execute. The package name is not necessarily the
+same as the project folder or distribution name. For a `src` layout, ensure
+the package is installed in the uv environment using the project's packaging
+configuration. If it is not installed, you can make `src` importable for pytest
+by adding this to `pyproject.toml`:
+
+```toml
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+```
+
+If `src/` contains several packages or standalone modules, measure the entire
+source directory instead:
+
+```bash
+uv run python -m pytest tests --cov=src
+```
+
+To include coverage in the auditor's quality report, generate `coverage.json`
+in the project root alongside the terminal and optional HTML coverage reports:
+
+```bash
+uv run python -m pytest tests --cov=src --cov-report=term-missing --cov-report=json:coverage.json --cov-report=html
+```
+
+Use `--cov=inventory_service` instead of `--cov=src` when measuring only that
+package. Open `htmlcov/index.html` to browse the HTML coverage report.
+
+If you already ran pytest with `--cov`, export its saved `.coverage` data
+without rerunning the tests:
+
+```bash
+uv run python -m coverage json -o coverage.json
+```
+
+Then run the auditor from the same project root, replacing the script path
+with the location of your pytest-auditor checkout. Install `rich` in this uv
+environment if it is not already available (`uv add --dev rich`).
+
+```bash
+uv run python /path/to/pytest-auditor/__main__.py tests --html pytest_audit.html
+```
+
+The auditor automatically reads `coverage.json` from the scanned test directory
+or its immediate parent, so scanning the project's `tests/` directory finds
+the report in the project root. It reads existing coverage data; it does not
+execute tests or collect coverage itself. Regenerate the report after source
+or test changes to keep the audit current.
 
 Coverage below 80% deducts points from the quality score.
 
@@ -261,15 +333,39 @@ build  dist  *.egg-info
 
 ## Quality score
 
-Starts at 100 and deducts:
+The score measures finding density rather than subtracting points for every
+finding across the entire suite. Larger suites no longer hit zero simply because
+they contain more tests. The same finding rate produces the same base score.
 
-| Item | Deduction |
-|------|-----------|
-| Each error | 8 points |
-| Each warning | 3 points |
-| Each info | 1 point |
-| Coverage < 80% | 0.5 × (80 − coverage%) |
-| Test debt > 10% | 0.3 × debt% |
+An **analysis unit** is a test, fixture, or unreadable test file. Identical
+findings (same file, line, code, and severity) count once. Starting at 100:
+
+| Component | Deduction |
+|-----------|-----------|
+| Errors | 60 × min(1, unique errors / units) |
+| Warnings | 25 × min(1, unique warnings / units) |
+| Suggestions | 5 × min(1, unique info findings / units) |
+| Coverage, when available | 5 × max(0, (80 − coverage%) / 80), capped at 5 |
+| Test debt | 5 × max(0, (debt% − 10) / 90), capped at 5 |
+
+Helper navigation and delegated-verification notes do not deduct points.
+For example, 100 tests with 20 warnings and no other findings score **95/100**;
+1,000 tests with 200 warnings also score **95/100**. A suite where every test
+has an error loses 60 points even before other deductions.
+
+If at least one error is found, the final score cannot exceed **70/100**.
+The cap can lower a score but never raises an already lower score. Reports show
+any extra reduction as “Error score cap”. CLI/CI score thresholds remain optional;
+the web UI does not ask for a minimum score.
+
+The final score is rounded to an integer. Reports show each component's
+deduction and the number of analysis units. Empty scans have no numerical score (JSON `score: null`) and an explicit
+“Not assessed / No tests found” status; scans with unreadable files are marked provisional.
+This is a static maintainability signal, not a test pass rate or proof of correctness.
+Existing CI thresholds should be reviewed because this replaces the old scoring scale.
+
+Findings retain the observed message and add **why it matters** and a
+**suggested fix** in the webpage, HTML, terminal, and JSON reports.
 
 **Grades:** 90–100 Excellent · 80–89 Good · 65–79 Needs work · 50–64 Poor · <50 Critical
 
@@ -299,3 +395,152 @@ Starts at 100 and deducts:
 - Python 3.10+
 - `rich` — `pip install rich`
 - `coverage.json` optional — produced by `coverage json` for coverage integration
+
+## Local web UI
+
+Start the browser interface from this checkout:
+
+```bash
+./run.sh
+```
+
+The launcher checks Python 3.10+, creates `.venv`, installs missing runtime
+dependencies, and starts the app. It reuses the environment on later runs.
+If Python is missing and `uv` is installed, it provisions Python 3.12. Otherwise,
+it explains which prerequisite to install. It does not install system packages.
+Use `./run.sh --port 9000` for another port, or `./run.sh --check` to prepare
+the environment without starting the server. Dependency installation requires
+network access only when packages are missing. Run `./run.sh --help` for usage.
+
+You can also start it directly with `.venv/bin/python web_server.py`. Browser
+binaries and development test dependencies are installed separately using the
+test instructions below; they are not needed to run the application.
+
+Open **http://127.0.0.1:8765**. Use `--port 9000` to choose another port.
+The server binds to your machine's loopback interface and adds no dependencies.
+Stop it with Ctrl+C.
+
+Choose **Full suite**, **Single file**, or **Single test**, enter the local
+path (absolute paths and `~` work). Single-test
+mode also asks for the test function name. The UI uses the existing scanners,
+including their automatic pytest configuration, fixture, and coverage discovery.
+It does not execute tests or generate fresh coverage.
+
+Results include score and explanations, coverage, debt, isolation, and
+searchable views of issues, files, tests, fixtures, directories, and configuration.
+The severity filter combines with search. Download the existing standalone HTML
+report or the full JSON report without writing output files into your project.
+For automation and pytest lifecycle integration, continue using the CLI/plugin.
+
+Install development dependencies and run the pytest suite with:
+
+```bash
+python3 -m pip install -r requirements-dev.txt
+python3 -m playwright install chromium
+python3 -m pytest -q
+```
+
+Use **Browse…** beside the local path to navigate folders or select a Python
+file. The picker browses the filesystem on the machine running the server.
+Hidden entries and excluded directories are omitted; paths can also be typed.
+
+Choose **GitHub repository** as the source to download and audit a repository.
+Enter `owner/repository` or its GitHub URL, optionally specify a branch, tag,
+or commit, and enter a repository-relative path such as `tests` or
+`tests/test_orders.py`. Leaving the path blank audits the repository root.
+All three scan modes and report downloads work with GitHub sources.
+
+Public repositories need no token. For private repositories, supply a GitHub
+access token with repository contents read access. The token is used only for
+that request, is not saved, and is cleared from the form afterward. Downloads
+use GitHub's archive API and temporary files are removed after analysis. No
+repository code is executed. Limits: 50 MB download, 150 MB extracted, and
+20,000 archive entries; symbolic links are rejected. Network access to GitHub
+is required, and API rate limits apply.
+
+## Python Playwright tests
+
+The auditor automatically recognizes browser tests through Playwright sync/async
+imports (including aliases), imported type annotations, `expect()` matchers,
+or characteristic locator/wait calls on the `page`/`context` fixtures. Detection
+is per test, so ordinary unit tests in a mixed module retain their usual rules.
+No Playwright installation or browser launch is required to audit source files.
+
+- Playwright `expect(...).to_*()` / `not_to_*()` assertions, including async and
+  soft assertions, contribute to assertion counts. Bare `expect()` calls and
+  browser actions alone do not count as verification.
+- Browser workflows do not receive the generic “more than five assertions” or
+  “assert in a loop” warnings. Long browser tests receive advice about page
+  objects and named steps. Naming, safety, collection, and async mark checks
+  continue to apply.
+- Playwright plugin marks (`only_browser`, `skip_browser`, `browser_context_args`)
+  are accepted in detected browser files/tests. Known plugin fixture scopes
+  participate in fixture scope checks; explicit fixture definitions override
+  those defaults.
+- Tests carry a `framework` field (`playwright` or `pytest`) in JSON and the
+  webpage's Tests view; standalone HTML labels Playwright tests as well.
+
+| Code | Level | Browser-specific check |
+|------|-------|------------------------|
+| PW01 | Warning | Fixed `wait_for_timeout` delay; prefer auto-waiting actions/assertions |
+| PW02 | Warning | `networkidle` used for readiness; assert expected UI state |
+| PW03 | Warning | Raw assert on UI snapshot methods; prefer retrying `expect()` matchers |
+| PW04 | Warning | Async Playwright `expect()` matcher called without `await` |
+
+These are static heuristics: external page-object/helper implementations,
+dynamic aliases, and values captured earlier in separate statements are not
+fully resolved. Existing coverage data and score deductions still apply;
+Playwright findings contribute to the warning-density component.
+
+In the Issues view, use **Sort by** to order findings by severity (errors first),
+issue code (similar findings together), or file (then line number). Choose
+ascending or descending order. Sorting combines with search and severity filters
+and is also available in the downloaded standalone HTML report.
+
+
+The scanner also recognizes `unittest.TestCase` subclasses regardless of class
+name, including imported aliases and inheritance through local base classes.
+Their `self.assert*()` assertions contribute to verification counts, and methods
+are labeled `unittest` in the report. Ordinary TestCase methods are not required
+to accept pytest fixtures or use pytest's exception assertion style.
+
+
+`tests/test_web_ui_browser.py` contains real browser tests using the Playwright
+`page` fixture and `expect()` assertions. They launch the local server and test
+suite/file/test audits, results, explanations, sorting/filtering, folder selection,
+GitHub form interactions, empty/error states, and JSON/HTML downloads. GitHub
+network downloads are stubbed for deterministic browser tests.
+`tests/test_browser_source_analysis.py` contains the source-snippet regression tests
+for the auditor's Playwright-specific static rules.
+
+Run only browser tests with `python3 -m pytest -q -m browser`, or run backend
+and static-rule tests with `python3 -m pytest -q -m "not browser"`.
+On a Linux system missing browser libraries, install them with
+`python3 -m playwright install --with-deps chromium`.
+
+The test suite separates discovery, scoring, reporting, web-source handling,
+HTTP integration, static Playwright rules, and browser workflows into focused
+modules. Shared fixtures in `tests/conftest.py` create isolated source files,
+ZIP archives, and the local server. GitHub tests replace only the network
+boundary and verify temporary checkout cleanup; browser tests run against the
+real scanner and HTTP server.
+
+
+Test modules are named by the behavior they cover:
+
+| Module | Responsibility |
+|--------|----------------|
+| `test_suite_discovery.py` | Test collection and verification detection |
+| `test_quality_scoring.py` | Score normalization, weighting, and limits |
+| `test_report_exports.py` | Findings, displayed paths, and HTML/JSON report data |
+| `test_browser_source_analysis.py` | Static Playwright source-analysis rules |
+| `test_audit_requests.py` | Direct audit requests and temporary checkout cleanup |
+| `test_http_endpoints.py` | Real HTTP routing, authentication, and request validation |
+| `test_local_folder_browser.py` | Local folder picker listings |
+| `test_github_sources.py` | GitHub URLs, downloads, and archive safety |
+| `test_web_ui_browser.py` | Real browser interactions and downloaded reports |
+
+Source snippets are test input data; comments distinguish them from the real
+browser cases. Empty-scan checks at the scoring, report, and browser layers
+verify different contracts. Serialization is verified at the HTTP/download
+boundaries instead of repeating JSON round-trip assertions in every audit test.

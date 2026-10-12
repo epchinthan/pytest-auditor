@@ -25,6 +25,8 @@ class Issue:
     message: str
     file:    str
     line:    int = 0
+    explanation: str = ""
+    suggestion: str = ""
 
 
 @dataclass
@@ -59,7 +61,8 @@ class SuiteReport:
     errors:            int   = 0
     warnings:          int   = 0
     infos:             int   = 0
-    score:             int   = 100
+    score:             int | None = 100
+    score_breakdown:   dict = field(default_factory=dict)
     # metrics
     skip_count:        int   = 0
     xfail_count:       int   = 0

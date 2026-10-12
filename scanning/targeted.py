@@ -12,6 +12,7 @@ from pathlib import Path
 
 from core import ast_helpers as h
 from core import checks
+from core import playwright as pw
 from core.models import INFO, FileReport, Issue, SuiteReport
 from reporting.config import (
     collect_conftest_fixtures,
@@ -21,7 +22,7 @@ from reporting.config import (
 )
 
 from scanning.file_analyzer import analyse_file
-from scanning.suite_scanner import _aggregate, _compute_score
+from scanning.suite_scanner import _aggregate, _compute_metrics, _compute_score
 
 # ── single file ───────────────────────────────────────────────────────────────
 
@@ -48,6 +49,7 @@ def scan_file(file_path: Path) -> SuiteReport:
     report.files.append(analyse_file(file_path, set(reg_marks), conftest_fixtures))
 
     _aggregate(report)
+    _compute_metrics(report)
     _compute_score(report)
     return report
 
@@ -95,18 +97,28 @@ def scan_test(file_path: Path, test_name: str) -> SuiteReport:
         target_node, file_path, target_class, all_fixture_names, set(reg_marks), tree
     )
 
-    focused = FileReport(path=str(file_path), test_count=1)
+    focused = FileReport(path=str(file_path), test_count=1,
+                         async_count=int(h.is_async(target_node)),
+                         line_count=len(_source.splitlines()))
     focused.tests.append({
         "name":    target_node.name,
         "line":    target_node.lineno,
         "class":   target_class,
-        "asserts": h.assert_count(target_node),
+        "asserts": pw.assertion_count(target_node, tree),
+        "framework": "unittest" if h.unittest_class_for(target_node, tree) else "playwright" if pw.is_playwright(target_node, tree) else "pytest",
         "async":   h.is_async(target_node),
         "marks":   h.get_marks(target_node) + module_marks,
         "lines":   len(target_node.body),
         "flags":   [i.code for i in test_issues],
     })
     focused.issues += test_issues
+
+    # Include plugin fixture scopes when checking a focused browser test.
+    scopes = {
+        **(pw.FIXTURE_SCOPES if pw.is_playwright(target_node, tree) else {}),
+        **conftest_fixtures,
+        **{name: h.fixture_scope(fnode) for name, fnode in file_fixtures.items()},
+    }
 
     # check fixtures the test uses
     used_fixture_names = [
@@ -127,6 +139,11 @@ def scan_test(file_path: Path, test_name: str) -> SuiteReport:
                 "bodylen": len(fnode.body),
             })
             focused.issues += checks.check_fixture(fnode, file_path)
+            for arg in fnode.args.args:
+                if arg.arg in scopes:
+                    focused.issues += checks.check_fixture_scope_compat(
+                        fname, scopes[fname], arg.arg, scopes[arg.arg], file_path, fnode.lineno
+                    )
         elif fname in conftest_fixtures:
             focused.fixture_count += 1
             focused.fixtures.append({
@@ -151,6 +168,7 @@ def scan_test(file_path: Path, test_name: str) -> SuiteReport:
     )
     report.files.append(focused)
     _aggregate(report)
+    _compute_metrics(report)
     _compute_score(report)
     return report
 
@@ -197,12 +215,12 @@ def _find_test(
     tree: ast.AST, test_name: str, file_path: Path
 ) -> tuple[ast.AST, str | None]:
     """Find the named test node. Searches top level and inside classes."""
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ClassDef):
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef) and (h.is_test_class(node) or h.is_unittest_class(node, tree)):
             for child in node.body:
                 if h.is_func(child) and child.name == test_name:
                     return child, node.name
-        if h.is_func(node) and node.name == test_name:
+        elif h.is_test_func(node) and node.name == test_name:
             return node, None
 
     available = [n.name for n in ast.walk(tree) if h.is_test_func(n)]

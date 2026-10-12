@@ -12,6 +12,7 @@ from pathlib import Path
 
 from core import ast_helpers as h
 from core import checks
+from core import playwright as pw
 from core.models import INFO, FileReport, Issue
 
 
@@ -32,6 +33,12 @@ def analyse_file(
     except (OSError, UnicodeDecodeError) as e:
         report.issues.append(Issue("error", "F002", f"Cannot parse: {e}", rel))
         return report
+
+    playwright_file = bool(pw.imports(tree)) or any(
+        h.is_test_func(n) and pw.is_playwright(n, tree) for n in ast.walk(tree)
+    )
+    if playwright_file:
+        registered_marks = registered_marks | pw.MARKS
 
     report.line_count = source.count("\n") + 1
 
@@ -78,8 +85,9 @@ def analyse_file(
 
     # ── scope compatibility ────────────────────────────────────────────────
     all_scopes = {
-        **{n: fixture_meta[n]["scope"] for n in fixture_meta},
+        **(pw.FIXTURE_SCOPES if playwright_file else {}),
         **conftest_fixtures,
+        **{n: fixture_meta[n]["scope"] for n in fixture_meta},
     }
     for name, node in file_fixtures.items():
         caller_scope = all_scopes.get(name, "function")
@@ -106,18 +114,19 @@ def analyse_file(
     name_lines: dict[str, list[int]] = defaultdict(list)
     fixture_usage: Counter = Counter()
 
-    def walk_tests(nodes: list, class_name: str | None = None) -> None:
+    def walk_tests(nodes: list, class_name: str | None = None, unittest_class: bool = False) -> None:
         for node in nodes:
             if isinstance(node, ast.ClassDef):
-                if h.is_test_class(node):
+                if h.is_test_class(node) or h.is_unittest_class(node, tree):
                     report.class_count += 1
-                    report.issues += checks.check_class(node, path)
-                    report.issues += checks.check_class_init(node, path)
+                    report.issues += checks.check_class(node, path, tree)
+                    if not h.is_unittest_class(node, tree):
+                        report.issues += checks.check_class_init(node, path)
                     report.issues += checks.check_registered_marks(
                         h.get_marks(node), registered_marks, path, node.lineno,
                         f"class '{node.name}'",
                     )
-                    walk_tests(node.body, class_name=node.name)
+                    walk_tests(node.body, class_name=node.name, unittest_class=h.is_unittest_class(node, tree))
                 else:
                     report.issues += checks.check_non_test_class(node, path)
                 continue
@@ -126,7 +135,7 @@ def analyse_file(
                 continue
             if h.is_fixture(node):
                 continue
-            if not h.is_test_func(node):
+            if not (h.is_test_func(node) or unittest_class and node.name.startswith("test")):
                 report.issues += checks.check_check_prefix(node, path, tree)
                 continue
 
@@ -134,7 +143,7 @@ def analyse_file(
             if h.is_async(node):
                 report.async_count += 1
 
-            name_lines[node.name].append(node.lineno)
+            name_lines[f"{class_name}.{node.name}" if class_name else node.name].append(node.lineno)
 
             for arg in node.args.args:
                 if arg.arg in known_fixture_names:
@@ -147,13 +156,15 @@ def analyse_file(
             issues += checks.check_assert_style(node, path, _pfx)
             issues += checks.check_test_structure(node, path, _pfx)
             issues += checks.check_warns_usage(node, path, _pfx)
-            issues += checks.check_unittest_style(node, path, _pfx)
+            if not unittest_class:
+                issues += checks.check_unittest_style(node, path, _pfx)
             issues += checks.check_mock_style(node, path, _pfx)
             report.tests.append({
                 "name":    node.name,
                 "line":    node.lineno,
                 "class":   class_name,
-                "asserts": h.assert_count(node),
+                "asserts": pw.assertion_count(node, tree),
+                "framework": "unittest" if unittest_class else "playwright" if pw.is_playwright(node, tree) else "pytest",
                 "async":   h.is_async(node),
                 "marks":   h.get_marks(node) + module_marks,
                 "lines":   len(node.body),

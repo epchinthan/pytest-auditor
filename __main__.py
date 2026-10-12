@@ -92,8 +92,9 @@ def main(argv: list[str] | None = None) -> int:
         if not args.no_terminal:
             console.print(f"  [dim]JSON → {args.json}[/dim]")
 
-    if args.fail_under and report.score < args.fail_under:
-        print(f"\nScore {report.score} below threshold {args.fail_under}", file=sys.stderr)
+    if args.fail_under and (report.score is None or report.score < args.fail_under):
+        print("\nNo tests found; score threshold cannot be assessed." if report.score is None else
+              f"\nScore {report.score} below threshold {args.fail_under}", file=sys.stderr)
         return 1
 
     return 0
@@ -148,6 +149,7 @@ def pytest_sessionfinish(session, exitstatus):
         )
 
     fail_under = session.config.getoption("--report-fail-under")
-    if fail_under and report.score < fail_under:
-        console.print(f"[bold red]Score {report.score} < {fail_under} — failing[/bold red]")
+    if fail_under and (report.score is None or report.score < fail_under):
+        console.print("[bold red]No tests found; score threshold cannot be assessed.[/bold red]" if report.score is None else
+                      f"[bold red]Score {report.score} < {fail_under} — failing[/bold red]")
         session.exitstatus = 1

@@ -5,8 +5,10 @@ Self-contained HTML report — no external CDN.
 from __future__ import annotations
 
 from pathlib import Path
+from html import escape
 
 from core.models import SuiteReport
+from reporting.paths import display_path
 
 
 def _sc(score: int) -> str:
@@ -23,26 +25,39 @@ def _badge(level: str) -> str:
     style = styles.get(level, "")
     return f'<span style="font-size:11px;font-weight:600;padding:2px 7px;border-radius:4px;{style}">{level.upper()}</span>'
 
-def generate_html(report: SuiteReport, out_path: Path) -> None:
-    sc = report.score
+def generate_html(report: SuiteReport, out_path: Path, folder_name: str | None = None) -> None:
+    sc = report.score if report.score is not None else 0
+    score_display = str(report.score) if report.score is not None else "—"
     sc_col = _sc(sc)
     cov    = f"{report.coverage_pct:.1f}%" if report.coverage_pct is not None else "—"
     cov_col = ("#16a34a" if (report.coverage_pct or 0) >= 80
                else "#d97706" if (report.coverage_pct or 0) >= 60 else "#dc2626")
 
+    sort_script = (Path(__file__).parent / 'issue_sort.js').read_text(encoding='utf-8')
+    score_details = ''.join(
+        f'<span style="display:inline-block;margin:6px 18px 6px 0">{escape(name)}: <strong>−{points:g} pts</strong></span>'
+        for name, points in (report.score_breakdown.get('deductions', {}) if report.score is not None else {}).items()
+    )
+    score_context = (f"Starts at 100 · {report.score_breakdown.get('units', 0)} analysis units (tests + fixtures + unreadable files)."
+                     if report.score is not None else "No score or deductions are assigned to an empty scan.")
+    score_note = escape(report.score_breakdown.get('note', ''))
+
     # ── issues rows ───────────────────────────────────────────────────────
     issue_rows = []
     for fr in report.files:
         if not fr.issues: continue
-        rel = fr.path.replace(report.root, "").lstrip("/\\") or fr.path
+        rel = display_path(fr.path, report.root, folder_name)
         for i in fr.issues:
+            rel = display_path(i.file, report.root, folder_name)
             loc = f":{i.line}" if i.line else ""
             issue_rows.append(
-                f'<tr>'
-                f'<td><code style="font-size:12px">{rel}{loc}</code></td>'
+                f'<tr data-file="{escape(rel, quote=True)}" data-level="{escape(i.level, quote=True)}" data-code="{escape(i.code, quote=True)}" data-line="{i.line}">'
+                f'<td><code style="font-size:12px">{escape(rel)}{loc}</code></td>'
                 f'<td>{_badge(i.level)}</td>'
                 f'<td><code style="font-size:11px;color:#6b7280">{i.code}</code></td>'
-                f'<td style="font-size:13px">{i.message}</td>'
+                f'<td style="font-size:13px">{escape(i.message)}'
+                f'<details><summary>Why this matters · How to fix</summary>'
+                f'<p>{escape(i.explanation)}</p><p><strong>Suggested fix:</strong> {escape(i.suggestion)}</p></details></td>'
                 f'</tr>'
             )
     issues_html = "\n".join(issue_rows) or (
@@ -53,7 +68,7 @@ def generate_html(report: SuiteReport, out_path: Path) -> None:
     file_rows = []
     for fr in report.files:
         if fr.test_count == 0 and fr.fixture_count == 0 and not fr.issues: continue
-        rel = fr.path.replace(report.root, "").lstrip("/\\") or fr.path
+        rel = display_path(fr.path, report.root, folder_name)
         ne = sum(1 for i in fr.issues if i.level == "error")
         nw = sum(1 for i in fr.issues if i.level == "warning")
         ni = sum(1 for i in fr.issues if i.level == "info")
@@ -75,7 +90,7 @@ def generate_html(report: SuiteReport, out_path: Path) -> None:
     # ── tests rows ────────────────────────────────────────────────────────
     test_rows = []
     for fr in report.files:
-        rel = fr.path.replace(report.root, "").lstrip("/\\") or fr.path
+        rel = display_path(fr.path, report.root, folder_name)
         for t in fr.tests:
             marks_html = " ".join(
                 f'<span style="font-size:10px;background:#dbeafe;color:#1e40af;'
@@ -103,7 +118,7 @@ def generate_html(report: SuiteReport, out_path: Path) -> None:
             test_rows.append(
                 f'<tr style="background:{row_bg}" data-line="{t["line"]}">'
                 f'<td><code style="font-size:11px">{rel}:{t["line"]}</code></td>'
-                f'<td style="font-size:12px">{cls}<strong>{t["name"]}</strong></td>'
+                f'<td style="font-size:12px">{cls}<strong>{t["name"]}</strong> {"[" + escape(t["framework"].title()) + "]" if t.get("framework") in {"playwright", "unittest"} else ""}</td>'
                 f'<td style="text-align:center">{t["asserts"]}</td>'
                 f'<td style="text-align:center">{t.get("lines","—")}</td>'
                 f'<td>{"⚡" if t["async"] else ""}</td>'
@@ -116,7 +131,7 @@ def generate_html(report: SuiteReport, out_path: Path) -> None:
     SC_COLORS = {"function":"#dbeafe","class":"#dcfce7","module":"#fef3c7","session":"#f3e8ff"}
     fx_rows = []
     for fr in report.files:
-        rel = fr.path.replace(report.root, "").lstrip("/\\") or fr.path
+        rel = display_path(fr.path, report.root, folder_name)
         for fx in fr.fixtures:
             sc_bg = SC_COLORS.get(fx["scope"], "#f3f4f6")
             flags = []
@@ -204,7 +219,7 @@ def generate_html(report: SuiteReport, out_path: Path) -> None:
     # ── full codes reference ───────────────────────────────────────────────
     CODES = [
         # Test quality
-        ("T001","error",  "No assert statements — test proves nothing"),
+        ("T001","error",  "No recognized verification — review assertions or helper"),
         ("T002","warning","Too many assertions (>5) — split or use parametrize"),
         ("T003","warning","Loop with assert inside — use @parametrize instead"),
         ("T004","warning","Float compared with == — use pytest.approx()"),
@@ -238,6 +253,10 @@ def generate_html(report: SuiteReport, out_path: Path) -> None:
         ("T037","error",  "Parametrized argument name absent from test signature"),
         ("T038","error",  "Duplicate @parametrize argument name"),
         ("T039","error",  "Parametrize row has the wrong number of values"),
+        ("PW01","warning","Fixed browser delay — prefer auto-waiting actions or expect()"),
+        ("PW02","warning","networkidle readiness — prefer assertions on UI state"),
+        ("PW03","warning","UI snapshot assertion without retries — prefer expect()"),
+        ("PW04","warning","Async Playwright assertion is not awaited"),
         # Mocking
         ("MK01","info",   "Mock patched but no assert_called* — patch may never be verified"),
         ("MK02","info",   "unittest.mock.patch used directly — prefer mocker.patch"),
@@ -386,11 +405,11 @@ input[type=search]:focus {{ border-color:#1c99c7 }}
                   stroke-dasharray="{2*3.14159*35*sc/100:.1f} {2*3.14159*35*(100-sc)/100:.1f}"
                   stroke-linecap="round"/>
         </svg>
-        <div class="score-num">{sc}</div>
+        <div class="score-num">{score_display}</div>
       </div>
       <div>
         <div style="font-size:15px;font-weight:700;color:{sc_col}">
-          {'Excellent' if sc>=90 else 'Good' if sc>=80 else 'Needs work' if sc>=65 else 'Poor' if sc>=50 else 'Critical'}
+          {'Not assessed' if report.score is None else 'Excellent' if sc>=90 else 'Good' if sc>=80 else 'Needs work' if sc>=65 else 'Poor' if sc>=50 else 'Critical'}
         </div>
         <div style="font-size:11px;color:#6b7280;margin-top:2px">Quality score</div>
       </div>
@@ -415,18 +434,24 @@ input[type=search]:focus {{ border-color:#1c99c7 }}
   </div>
 </div>
 
+<section>
+  <div class="sec-head">How this score is calculated</div>
+  <div class="chart-section"><p>{score_note}</p><p>{score_context}</p>{score_details}</div>
+</section>
 <!-- issues -->
 <section>
   <div class="sec-head">
     Issues <span class="cnt">{report.total_issues}</span>
     <div style="margin-left:auto;font-size:11px;display:flex;gap:6px">
-      <span style="background:rgba(220,38,38,.25);color:#fca5a5;padding:2px 7px;border-radius:8px">ERROR = 8 pts</span>
-      <span style="background:rgba(217,119,6,.25);color:#fcd34d;padding:2px 7px;border-radius:8px">WARNING = 3 pts</span>
-      <span style="background:rgba(29,130,199,.25);color:#93c5fd;padding:2px 7px;border-radius:8px">INFO = 1 pt</span>
+      <span style="background:rgba(220,38,38,.25);color:#fca5a5;padding:2px 7px;border-radius:8px">Errors: up to 60 pts</span>
+      <span style="background:rgba(217,119,6,.25);color:#fcd34d;padding:2px 7px;border-radius:8px">Warnings: up to 25 pts</span>
+      <span style="background:rgba(29,130,199,.25);color:#93c5fd;padding:2px 7px;border-radius:8px">Suggestions: up to 5 pts</span>
     </div>
   </div>
   <div class="filter-bar">
-    <input type="search" id="iss-q" placeholder="Filter issues…" oninput="filterTbl('iss-tbl',this.value)">
+    <input type="search" id="iss-q" placeholder="Filter issues…" oninput="filterIssues()">
+    <label for="iss-sort">Sort by</label><select id="iss-sort" onchange="sortIssues()"><option value="severity">Severity (errors first)</option><option value="code">Issue code</option><option value="file">File</option></select>
+    <label for="iss-order">Order</label><select id="iss-order" onchange="sortIssues()"><option value="asc">Ascending</option><option value="desc">Descending</option></select>
     <button class="btn" style="background:#fee2e2;color:#991b1b;border-color:#fca5a5" onclick="filterLvl('error')">ERROR</button>
     <button class="btn" style="background:#fef3c7;color:#92400e;border-color:#fcd34d" onclick="filterLvl('warning')">WARNING</button>
     <button class="btn" style="background:#f1f5f9;color:#374151;border-color:#e2e8f0" onclick="filterLvl('')">All</button>
@@ -548,6 +573,7 @@ input[type=search]:focus {{ border-color:#1c99c7 }}
 </div>
 
 <script>
+{sort_script}
 function tab(el,id){{
   el.closest('section').querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   el.closest('section').querySelectorAll('.tab-pane').forEach(p=>p.classList.remove('active'));
@@ -560,11 +586,24 @@ function filterTbl(id,q){{
     r.style.display=r.textContent.toLowerCase().includes(lq)?'':'none';
   }});
 }}
-function filterLvl(lvl){{
-  document.getElementById('iss-tbl').querySelectorAll('tbody tr').forEach(r=>{{
-    r.style.display=(!lvl||r.textContent.includes(lvl))?'':'none';
+let issueLevel = '';
+function filterIssues(){{
+  const query = document.getElementById('iss-q').value.toLowerCase();
+  document.getElementById('iss-tbl').querySelectorAll('tbody tr').forEach(row=>{{
+    row.style.display = (!issueLevel || row.dataset.level === issueLevel) && row.textContent.toLowerCase().includes(query) ? '' : 'none';
   }});
 }}
+function filterLvl(lvl){{
+  issueLevel = lvl;
+  filterIssues();
+}}
+function sortIssues(){{
+  const body = document.querySelector('#iss-tbl tbody');
+  const key = document.getElementById('iss-sort').value;
+  const direction = document.getElementById('iss-order').value;
+  [...body.rows].sort((a,b)=>compareIssues(a.dataset,b.dataset,key,direction)).forEach(row=>body.appendChild(row));
+}}
+sortIssues();
 </script>
 </body>
 </html>"""

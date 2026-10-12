@@ -26,10 +26,58 @@ def is_test_class(node: ast.AST) -> bool:
 def is_async(node: ast.AST) -> bool:
     return isinstance(node, ast.AsyncFunctionDef)
 
-def is_unittest_class(node: ast.AST) -> bool:
-    return isinstance(node, ast.ClassDef) and any(
-        "TestCase" in unparse(b) for b in node.bases
-    )
+def is_unittest_class(node: ast.AST, tree: ast.AST | None = None) -> bool:
+    if not isinstance(node, ast.ClassDef):
+        return False
+    roots = {"unittest.TestCase", "unittest.IsolatedAsyncioTestCase"}
+    if tree is None:
+        return any(unparse(base) in roots | {"TestCase", "IsolatedAsyncioTestCase"} for base in node.bases)
+    for item in getattr(tree, "body", []):
+        if isinstance(item, ast.ImportFrom) and item.module == "unittest":
+            roots.update(alias.asname or alias.name for alias in item.names
+                         if alias.name in {"TestCase", "IsolatedAsyncioTestCase"})
+        elif isinstance(item, ast.Import):
+            for alias in item.names:
+                if alias.name == "unittest":
+                    name = alias.asname or "unittest"
+                    roots.update({f"{name}.TestCase", f"{name}.IsolatedAsyncioTestCase"})
+    classes = [n for n in getattr(tree, "body", []) if isinstance(n, ast.ClassDef)]
+    recognized = set()
+    changed = True
+    while changed:
+        changed = False
+        for candidate in classes:
+            if candidate.name not in recognized and any(unparse(base) in roots | recognized for base in candidate.bases):
+                recognized.add(candidate.name)
+                changed = True
+    return node.name in recognized
+
+
+def unittest_class_for(node: ast.AST, tree: ast.AST | None):
+    for candidate in ast.walk(tree) if tree is not None else []:
+        if isinstance(candidate, ast.ClassDef) and node in candidate.body and is_unittest_class(candidate, tree):
+            return candidate
+    return None
+
+
+UNITTEST_ASSERTIONS = {
+    'assertEqual', 'assertNotEqual', 'assertTrue', 'assertFalse', 'assertIs', 'assertIsNot',
+    'assertIsNone', 'assertIsNotNone', 'assertIn', 'assertNotIn', 'assertIsInstance', 'assertNotIsInstance',
+    'assertAlmostEqual', 'assertNotAlmostEqual', 'assertGreater', 'assertGreaterEqual', 'assertLess',
+    'assertLessEqual', 'assertRegex', 'assertNotRegex', 'assertCountEqual', 'assertMultiLineEqual',
+    'assertSequenceEqual', 'assertListEqual', 'assertTupleEqual', 'assertSetEqual', 'assertDictEqual',
+    'assertRaises', 'assertRaisesRegex', 'assertWarns', 'assertWarnsRegex', 'assertLogs', 'assertNoLogs',
+    'assertIsSubclass', 'assertNotIsSubclass',
+}
+
+
+def unittest_assert_calls(node: ast.AST, tree: ast.AST | None) -> list[ast.Call]:
+    if unittest_class_for(node, tree) is None or not node.args.args:
+        return []
+    receiver = node.args.args[0].arg
+    return [n for n in ast.walk(node) if isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Attribute) and isinstance(n.func.value, ast.Name)
+            and n.func.value.id == receiver and n.func.attr in UNITTEST_ASSERTIONS]
 
 
 # ── fixture detection ─────────────────────────────────────────────────────────
@@ -188,8 +236,8 @@ def param_ids_with_special_chars(node: ast.AST) -> bool:
 
 # ── assert quality ────────────────────────────────────────────────────────────
 
-def assert_count(node: ast.AST) -> int:
-    return sum(1 for n in ast.walk(node) if isinstance(n, ast.Assert))
+def assert_count(node: ast.AST, tree: ast.AST | None = None) -> int:
+    return sum(1 for n in ast.walk(node) if isinstance(n, ast.Assert)) + len(unittest_assert_calls(node, tree))
 
 def has_loop_with_assert(node: ast.AST) -> bool:
     for n in ast.walk(node):
@@ -460,12 +508,16 @@ def has_non_assert_verification(node: ast.AST) -> bool:
 # ── fixture call detection ────────────────────────────────────────────────────
 
 def calls_fixture(node: ast.AST, known: set[str]) -> list[str]:
+    # Parameters contain injected fixture values, which can legitimately be
+    # callable factories. Only bare calls to uninjected fixture functions are misuse.
+    injected = {arg.arg for arg in node.args.args + node.args.kwonlyargs}
     return [
         n.func.id
         for n in ast.walk(node)
         if isinstance(n, ast.Call)
         and isinstance(n.func, ast.Name)
         and n.func.id in known
+        and n.func.id not in injected
     ]
 
 
@@ -882,6 +934,9 @@ def calls_function_with_asserts(node: ast.AST, tree: ast.AST) -> bool:
         def test_get(client):
             check_response(client.get("/"))   # no assert here, but delegates
     """
+    if tree is None:
+        return False
+
     # collect all functions in the file that contain asserts
     helpers_with_asserts: set[str] = set()
     for n in ast.walk(tree):
@@ -889,7 +944,7 @@ def calls_function_with_asserts(node: ast.AST, tree: ast.AST) -> bool:
             isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
             and n is not node                          # not the test itself
             and not n.name.startswith("test_")         # not another test
-            and any(isinstance(c, ast.Assert) for c in ast.walk(n))
+            and assert_count(n, tree) > 0
         ):
             helpers_with_asserts.add(n.name)
 

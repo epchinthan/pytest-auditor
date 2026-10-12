@@ -56,15 +56,23 @@ def print_report(report: SuiteReport) -> None:
     console.print()
 
     # ── score card ────────────────────────────────────────────────────────
-    sc = report.score
+    sc = report.score if report.score is not None else 0
     sc_col = _score_colour(sc)
     sc_label = _score_label(sc)
     bar_len = 40
     filled = int(bar_len * sc / 100)
     bar = "█" * filled + "░" * (bar_len - filled)
 
-    console.print(f"  Quality score  [{sc_col}]{sc:3d}/100  {sc_label}[/{sc_col}]")
-    console.print(f"  [{sc_col}]{bar}[/{sc_col}]")
+    if report.score is None:
+        console.print("  Quality score: Not assessed — no tests found")
+    else:
+        console.print(f"  Quality score  [{sc_col}]{sc:3d}/100  {sc_label}[/{sc_col}]")
+        console.print(f"  [{sc_col}]{bar}[/{sc_col}]")
+    if report.score_breakdown:
+        console.print(f"  {report.score_breakdown['note']}", markup=False)
+        console.print("  Deductions: " + " · ".join(
+            f"{name} {points:g}" for name, points in report.score_breakdown['deductions'].items()
+        ), markup=False)
     console.print()
 
     # ── summary stats ─────────────────────────────────────────────────────
@@ -112,6 +120,8 @@ def print_report(report: SuiteReport) -> None:
                     f"{loc}"
                     f"{issue.message}"
                 )
+                console.print(f"      Why: {issue.explanation}", markup=False)
+                console.print(f"      Fix: {issue.suggestion}", markup=False)
             console.print()
 
     # ── issue summary table ───────────────────────────────────────────────

@@ -9,7 +9,7 @@ SCORE   ?= 80
 
 HERE := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 
-.PHONY: audit audit-strict install help
+.PHONY: audit audit-strict install help test
 
 help:
 	@echo ""
@@ -33,3 +33,6 @@ audit: install
 
 audit-strict: install
 	$(PYTHON) "$(HERE)/__main__.py" "$(TESTS)" --html "$(HTML)" --fail-under $(SCORE)
+# Install requirements-dev.txt once before running the development test suite.
+test:
+	$(PYTHON) -m pytest -q

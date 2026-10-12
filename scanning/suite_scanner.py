@@ -10,6 +10,7 @@ import datetime
 from collections import defaultdict
 from pathlib import Path
 
+from core.guidance import explain
 from core.models import INFO, WARNING, FileReport, Issue, SuiteReport
 from reporting.config import (
     collect_conftest_fixtures,
@@ -133,6 +134,8 @@ def _aggregate(report: SuiteReport) -> None:
     report.async_count    = sum(f.async_count for f in report.files)
 
     all_issues = [i for f in report.files for i in f.issues]
+    for issue in all_issues:
+        issue.explanation, issue.suggestion = explain(issue)
     report.total_issues = len(all_issues)
     report.errors   = sum(1 for i in all_issues if i.level == "error")
     report.warnings = sum(1 for i in all_issues if i.level == "warning")
@@ -172,12 +175,36 @@ def _compute_metrics(report: SuiteReport) -> None:
 
 
 def _compute_score(report: SuiteReport) -> None:
-    score = 100
-    score -= report.errors   * 8
-    score -= report.warnings * 3
-    score -= report.infos    * 1
-    if report.coverage_pct is not None and report.coverage_pct < 80:
-        score -= int((80 - report.coverage_pct) * 0.5)
-    if report.test_debt_pct > 10:
-        score -= int(report.test_debt_pct * 0.3)
-    report.score = max(0, min(100, score))
+    """Size-normalized finding density, with bounded, visible deductions."""
+    # Unparseable files count as one unit, because their test count is unknown.
+    unreadable = {f.path for f in report.files for i in f.issues if i.code in {"F001", "F002"}}
+    units = max(1, report.total_tests + report.total_fixtures + len(unreadable))
+    # Structural stub reports can repeat locations. Count each finding once.
+    findings = {(i.file, i.line, i.code, i.level) for f in report.files for i in f.issues
+                if i.code != "INFO" and not (i.code == "T001" and i.level == "info")}
+    counts = {level: sum(i[3] == level for i in findings) for level in ("error", "warning", "info")}
+    deductions = {
+        "Errors": 60 * min(1, counts["error"] / units),
+        "Warnings": 25 * min(1, counts["warning"] / units),
+        "Suggestions": 5 * min(1, counts["info"] / units),
+        "Coverage": 0 if report.coverage_pct is None else 5 * max(0, min(1, (80 - report.coverage_pct) / 80)),
+        "Test debt": 5 * max(0, min(1, (report.test_debt_pct - 10) / 90)),
+    }
+    no_tests = report.total_tests == 0
+    base_score = max(0, 100 - sum(deductions.values()))
+    # Even a sparse error in a large suite must keep the grade at or below 70.
+    error_cap = 70 if counts["error"] else None
+    if error_cap is not None and base_score > error_cap:
+        deductions["Error score cap"] = base_score - error_cap
+    report.score = None if no_tests else max(0, round(min(base_score, error_cap) if error_cap is not None else base_score))
+    report.score_breakdown = {
+        "method": "finding-density-v3", "units": units, "unique_findings": counts,
+        "error_cap": error_cap if not no_tests else None,
+        "deductions": {} if no_tests else {key: round(value, 2) for key, value in deductions.items()},
+        "status": "no_tests" if no_tests else "provisional" if unreadable else "assessed",
+        "note": ("No tests were found; there is no assessed quality score." if no_tests else
+                 "Some files could not be analyzed; fix parsing errors before relying on this score." if unreadable else
+                 "Finding rates are normalized by tests plus fixtures. Suggestions have limited impact; helper notes have none."),
+    }
+    if not no_tests and error_cap is not None:
+        report.score_breakdown["note"] += " At least one error was found, so the total score cannot exceed 70/100."
